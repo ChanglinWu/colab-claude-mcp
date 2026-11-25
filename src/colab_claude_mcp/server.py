@@ -32,9 +32,10 @@ import httpx
 from mcp.types import ImageContent, TextContent
 from pydantic import Field
 
-from colab_claude_mcp import config
+from colab_claude_mcp import config, matlab_tools
 
-INSTRUCTIONS = f"""\
+INSTRUCTIONS = (
+    f"""\
 Drives a Google Colab notebook that is open in the user's browser.
 
 Start with colab_connect. It reuses the Colab tab that is already connected and only
@@ -51,6 +52,8 @@ A live copy of the notebook is served at {config.mirror_url()} (the mirror page)
 it in the built-in browser so the user can watch cells, run status and outputs there.
 Choosing a GPU or other runtime type is done by the user in the Colab tab.
 """
+    + matlab_tools.INSTRUCTIONS
+)
 
 mcp = FastMCP(name="colab-claude-mcp", instructions=INSTRUCTIONS)
 
@@ -254,6 +257,9 @@ async def move_cell(
 ) -> ToolResult:
     """Move a cell to another position."""
     return await hub_call("move_cell", {"cell_id": cell_id, "cell_index": cell_index})
+
+
+matlab_tools.register(mcp)
 
 
 def run_stdio() -> None:

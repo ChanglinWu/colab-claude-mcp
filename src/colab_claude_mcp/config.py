@@ -20,7 +20,7 @@ import os
 from pathlib import Path
 import secrets
 
-VERSION = "0.1.2"
+VERSION = "0.2.0"
 
 # Version of the HTTP API between the stdio server and the hub. A hub with a tab connected is
 # replaced only when this differs, so ordinary upgrades do not drop the tab.
@@ -77,3 +77,23 @@ def load_token() -> str:
     path.write_text(token)
     path.chmod(0o600)
     return token
+
+
+# --- MATLAB -------------------------------------------------------------------------------
+
+
+def matlab_session() -> str:
+    """Name of the shared MATLAB session that the MATLAB tools start and connect to."""
+    return os.environ.get("COLAB_CLAUDE_MATLAB_SESSION", "colab_claude_mcp")
+
+
+def matlab_home() -> Path:
+    """Where MATLAB run logs, figures and the session state file are kept."""
+    path = home() / "matlab"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def matlab_options() -> str:
+    """Extra MATLAB startup options, for example "-sd /path/to/project"."""
+    return os.environ.get("COLAB_CLAUDE_MATLAB_OPTIONS", "")

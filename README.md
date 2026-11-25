@@ -116,6 +116,76 @@ uvx --from git+https://github.com/ChanglinWu/colab-claude-mcp colab-claude-mcp s
   (every 2 s while a cell runs or the page is open).
 - The Colab page decides which notebook operations exist; this server wraps the seven it offers today.
 
+## MATLAB (local)
+
+The same server can also run MATLAB code in a MATLAB installed on this computer, with all your
+toolboxes, for example finite element models with the PDE Toolbox.
+
+中文：同一个 MCP 也能驱动本机 MATLAB（含全部工具箱，例如用 PDE Toolbox 做有限元仿真）。MATLAB 会话常驻，
+换 Claude 会话后工作区变量还在；图会以图片返回并保存为 PNG。
+
+### Install
+
+The MATLAB tools need MATLAB Engine for Python (`matlabengine`) in the server's environment, at the
+version that matches your MATLAB release, on Python 3.14 or older (the engine does not support 3.15):
+
+```bash
+claude mcp add colab-claude-mcp --scope user -e COLAB_CLAUDE_BROWSER=chrome -- uvx --python 3.14 --with "matlabengine==26.2.*" git+https://github.com/ChanglinWu/colab-claude-mcp
+```
+
+| MATLAB | `matlabengine` |
+|---|---|
+| R2026b | `26.2.*` |
+| R2026a | `26.1.*` |
+| R2025b | `25.2.*` |
+| R2025a | `25.1.*` |
+
+Without the engine the Colab tools work as before and the MATLAB tools say how to install it.
+
+### Tools
+
+| Tool | What it does |
+|---|---|
+| `matlab_connect` | Start or connect to the MATLAB session. Headless by default; `desktop=true` opens the MATLAB desktop so you can watch; `session` connects to a session you shared yourself |
+| `matlab_eval` | Run `code` or a `.m` `script` in the base workspace. Returns printed output and attaches the figures the run made; returns early after `wait_seconds` |
+| `matlab_wait` | Wait for a run that is still going |
+| `matlab_interrupt` | Interrupt the run (like Ctrl+C); the workspace is kept |
+| `matlab_status` | Session, mode, current run, working folder, open figures and `whos` |
+| `matlab_stop` | Quit the session (the workspace is lost) |
+
+### How it works
+
+MATLAB started with `-batch` cannot be found by the engine, and with `-nodesktop` it exits when its
+stdin closes. So `colab-claude-mcp matlab-host` (started for you, detached) starts MATLAB through the
+engine, shares it as `colab_claude_mcp`, and waits until MATLAB exits. Each Claude session connects to
+that shared session by name, so variables, meshes and results survive between sessions, the way the
+Colab tab survives through the hub.
+
+Each run marks the figures that already exist, runs the code, then exports the new figures with
+`exportgraphics` (helpers in `src/colab_claude_mcp/mfiles/+ccmcp`). In headless mode figures are
+invisible and closed after export; in desktop mode they stay open.
+
+To let Claude work in a MATLAB desktop you opened yourself, run
+`matlab.engine.shareEngine('colab_claude_mcp')` in it (or any name, then `matlab_connect(session=...)`).
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `COLAB_CLAUDE_MATLAB_SESSION` | `colab_claude_mcp` | Name of the shared MATLAB session |
+| `COLAB_CLAUDE_MATLAB_OPTIONS` | none | Extra MATLAB startup options, such as `-sd /path/to/project` |
+
+Run code, logs (`.m`, `.log`) and figures (`.png`) are kept in `~/.colab-claude-mcp/matlab/runs/`;
+the host logs to `~/.colab-claude-mcp/matlab/host.log`.
+
+### Limits
+
+- MATLAB runs one thing at a time. Runs from two Claude sessions queue in MATLAB.
+- MATLAB hands printed output to the engine when a run ends, so a run that is still going shows no
+  partial output. For progress on long runs, write to a file.
+- `code` is run with `eval`: several lines are fine, local functions are not. Use `script` for those.
+- Runs use a MATLAB diary for their log, which replaces a diary you had on in the same session.
+- MATLAB in the cloud is not supported: MATLAB Online has no API for this, and installing MATLAB in
+  Colab needs a license that can be used there.
+
 ## Security
 
 - The hub listens on localhost only. The websocket accepts only Colab origins and requires the token.

@@ -49,10 +49,12 @@ def main(argv: list[str] | None = None) -> int:
         "command",
         nargs="?",
         default="serve",
-        choices=["serve", "hub", "status", "stop"],
+        choices=["serve", "hub", "status", "stop", "matlab-host"],
         help="serve: stdio MCP server (default). hub: run the hub in the foreground. "
-        "status: show whether the hub is running. stop: stop the hub.",
+        "status: show whether the hub is running. stop: stop the hub. "
+        "matlab-host: start MATLAB and keep it shared for the MATLAB tools (started automatically).",
     )
+    parser.add_argument("--desktop", action="store_true", help="matlab-host: open the MATLAB desktop.")
     args = parser.parse_args(argv)
 
     if args.command == "serve":
@@ -60,6 +62,10 @@ def main(argv: list[str] | None = None) -> int:
 
         run_stdio()
         return 0
+    if args.command == "matlab-host":
+        from colab_claude_mcp.matlab_host import run_host
+
+        return run_host(desktop=args.desktop)
     if args.command == "hub":
         from colab_claude_mcp.hub import run_hub
 
