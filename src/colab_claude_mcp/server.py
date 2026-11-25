@@ -279,5 +279,21 @@ async def _ensure_viewer() -> str | None:
 matlab_tools.register(mcp, _ensure_viewer)
 
 
+def _housekeeping() -> None:
+    """Clear what a killed MATLAB session left behind, before any tool runs.
+
+    The hub needs nothing of the kind: it is found through its health check, keeps no pid or lock
+    files, and the system frees its ports when it is killed.
+    """
+    try:
+        from colab_claude_mcp import matlab_host  # noqa: PLC0415
+
+        for line in matlab_host.clear_stale():
+            matlab_host.note(f"startup check: {line}")
+    except Exception:  # noqa: BLE001 - never stop the server from starting
+        pass
+
+
 def run_stdio() -> None:
+    _housekeeping()
     mcp.run(show_banner=False)

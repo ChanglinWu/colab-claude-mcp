@@ -216,6 +216,24 @@ Each run marks the figures that already exist, runs the code, then exports the n
 `exportgraphics` (helpers in `src/colab_claude_mcp/mfiles/+ccmcp`). In headless mode figures are
 invisible and closed after export; in desktop mode they stay open.
 
+If MATLAB is killed (for example together with the Claude app that started it), it leaves its
+socket `/tmp/colab_claude_mcp` behind. `matlab.engine.find_matlab()` then no longer lists the
+session, but MATLAB refuses to share a new one under that name ("MATLAB session 'colab_claude_mcp'
+already exists"). So the server checks for such leftovers when it starts and again just before it
+starts MATLAB:
+
+- A socket is removed if it is at least 10 s old, the MATLAB recorded for it is gone, and no
+  process has it open (checked with `lsof`, or `/proc/net/unix` on Linux).
+- `matlab/session.json` is removed if the MATLAB pid recorded there is gone or now belongs to another
+  program.
+- What was removed is reported in `matlab_connect`'s reply and in `host.log`.
+- If MATLAB still cannot be shared, `matlab_connect` returns the host's error right away instead of
+  waiting out `wait_seconds`.
+
+The Colab hub needs no such check: it is found through its health check, keeps no pid or lock
+files, and the system frees its ports when it is killed. A killed hub does drop the Colab tab,
+though.
+
 To let Claude work in a MATLAB desktop you opened yourself, run
 `matlab.engine.shareEngine('colab_claude_mcp')` in it (or any name, then `matlab_connect(session=...)`).
 

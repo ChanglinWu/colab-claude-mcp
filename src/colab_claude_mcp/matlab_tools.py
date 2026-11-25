@@ -156,9 +156,9 @@ def _tail(path: Path, limit: int = 4_000) -> str:
     return data[-limit:].decode("utf-8", errors="replace")
 
 
-def _spawn_host(desktop: bool) -> None:
+def _spawn_host(desktop: bool) -> subprocess.Popen:
     log = open(config.matlab_home() / "host.out", "ab")
-    subprocess.Popen(
+    return subprocess.Popen(
         [sys.executable, "-m", "colab_claude_mcp", "matlab-host"] + (["--desktop"] if desktop else []),
         stdin=subprocess.DEVNULL,
         stdout=log,
@@ -172,13 +172,36 @@ async def _find(engine_mod) -> tuple[str, ...]:
     return tuple(await asyncio.to_thread(engine_mod.find_matlab))
 
 
-async def _wait_for(engine_mod, name: str, present: bool, seconds: float) -> bool:
+async def _wait_for(engine_mod, name: str, present: bool, seconds: float, host: Any = None) -> bool:
+    """Wait until the session is (or is no longer) shared. Gives up early if host has exited."""
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
         if (name in await _find(engine_mod)) == present:
             return True
+        if host is not None and host.poll() is not None:
+            return (name in await _find(engine_mod)) == present
         await asyncio.sleep(1)
     return False
+
+
+def _last_error(path: Path) -> str:
+    """The message of the last ERROR line in a host log, or ""."""
+    for line in reversed(_tail(path, 20_000).splitlines()):
+        if " ERROR " in line:
+            return line.split(" ERROR ", 1)[1].strip()
+    return ""
+
+
+def _start_failure(host: Any, wait_seconds: float) -> str:
+    home = config.matlab_home()
+    logs = f"See {home / 'host.log'} and {home / 'host.out'}."
+    if host is None or host.poll() is None:
+        return f"MATLAB did not start within {wait_seconds:.0f} s. {logs}"
+    reason = _last_error(home / "host.log")
+    if not reason:
+        lines = [line for line in _tail(home / "host.out", 4_000).splitlines() if line.strip()]
+        reason = lines[-1].strip() if lines else f"exit code {host.returncode}"
+    return f"MATLAB could not be started: {reason} {logs}"
 
 
 async def _connect(
@@ -205,13 +228,13 @@ async def _connect(
             if name != own:
                 listed = ", ".join(names) or "none"
                 raise RuntimeError(f"No shared MATLAB session named {name!r}. Shared sessions: {listed}.")
-            _spawn_host(bool(desktop))
+            # A killed MATLAB leaves its socket behind, and MATLAB then refuses to share a new
+            # session under the same name; clear such leftovers before starting.
+            notes += await asyncio.to_thread(matlab_host.clear_stale, name)
+            host = _spawn_host(bool(desktop))
+            if not await _wait_for(engine_mod, name, True, wait_seconds, host):
+                raise RuntimeError(_start_failure(host, wait_seconds))
             notes.append(f"Started MATLAB ({'desktop' if desktop else 'headless'}).")
-            if not await _wait_for(engine_mod, name, True, wait_seconds):
-                raise RuntimeError(
-                    f"MATLAB did not start within {wait_seconds:.0f} s. "
-                    f"See {config.matlab_home() / 'host.log'} and {config.matlab_home() / 'host.out'}."
-                )
             _engine = None
         elif desktop is not None and name == own and state.get("mode") and (state["mode"] == "desktop") != desktop:
             notes.append(
@@ -246,10 +269,12 @@ async def _quit(force: bool) -> str:
     if name not in await _find(engine_mod):
         return "MATLAB is not running."
     if force and state.get("matlab_pid"):
-        try:
-            os.kill(int(state["matlab_pid"]), 15)
-        except ProcessLookupError:
-            pass
+        pid = int(state["matlab_pid"])
+        if matlab_host.is_matlab_process(pid):  # the pid in the state file may have been reused
+            try:
+                os.kill(pid, 15)
+            except ProcessLookupError:
+                pass
     else:
         if _engine is None or _engine_name != name:
             _engine = await asyncio.to_thread(engine_mod.connect_matlab, name)
@@ -652,6 +677,11 @@ def register(mcp: FastMCP, viewer: Callable[[], Awaitable[bool]] | None = None) 
             )
         else:
             lines.append(f"MATLAB session {own!r}: not running (matlab_connect or matlab_eval starts it).")
+            leftover = await asyncio.to_thread(matlab_host.stale_socket, own)
+            if leftover:
+                lines.append(
+                    f"A killed MATLAB left its socket at {leftover}; it is removed when MATLAB is next started."
+                )
         others = [name for name in names if name != own]
         if others:
             lines.append("Other shared MATLAB sessions: " + ", ".join(others))
