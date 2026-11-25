@@ -20,7 +20,11 @@ import os
 from pathlib import Path
 import secrets
 
-VERSION = "0.1.1"
+VERSION = "0.1.2"
+
+# Version of the HTTP API between the stdio server and the hub. A hub with a tab connected is
+# replaced only when this differs, so ordinary upgrades do not drop the tab.
+API_VERSION = 1
 
 COLAB = "https://colab.research.google.com"
 COLAB_ALT_DOMAIN = "https://colab.google.com"

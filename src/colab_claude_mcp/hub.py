@@ -52,6 +52,7 @@ MIRROR_ACTIVE_SECONDS = 15
 SOURCE_REFRESH_SECONDS = 2
 FULL_REFRESH_SECONDS = 10
 MAX_WAIT_SECONDS = 600
+PENDING_TAB_SECONDS = 15 * 60  # how long an opened tab that has not connected is waited for
 
 
 def ok(text: str, images: list[dict] | None = None) -> dict:
@@ -99,6 +100,8 @@ class Hub:
         self.started = time.time()
         self.last_activity = time.time()
         self.last_mirror = 0.0
+        self.pending_tab_at: float | None = None  # a tab was opened and has not connected yet
+        self.pending_notebook: str | None = None
         self._digests: dict[str, str] = {}
         self._cells_digest = ""
         self._last_full_refresh = 0.0
@@ -122,10 +125,11 @@ class Hub:
 
     def _frontend_changed(self, connected: bool) -> None:
         if connected:
+            self.pending_tab_at = None
             self._event("connect", "Colab tab connected")
             self._spawn(self._safe_refresh(include_outputs=True))
         else:
-            self._event("disconnect", "Colab tab disconnected")
+            self._event("disconnect", f"Colab tab disconnected ({self.frontend.last_close})")
 
     def _set_outputs(self, cell_id: str, items: list[dict]) -> None:
         digest = hashlib.blake2b(json.dumps(items, sort_keys=True).encode(), digest_size=16).hexdigest()
@@ -257,6 +261,18 @@ class Hub:
             await self._safe_refresh(include_outputs=True)
             return ok("Already connected; the open Colab tab was reused and no tab was opened.\n" + self.status_text())
         generation = self.frontend.generation
+        # A tab opened a moment ago that has not connected is almost always waiting for a Google
+        # sign-in. Opening another one would not help, so wait for that one instead.
+        pending_for = time.time() - self.pending_tab_at if self.pending_tab_at else None
+        waiting_on_pending = bool(
+            open_tab
+            and not new_notebook
+            and not notebook_url
+            and pending_for is not None
+            and pending_for < PENDING_TAB_SECONDS
+        )
+        if waiting_on_pending:
+            open_tab = False
         if open_tab:
             try:
                 url = self.tab_url(notebook_url)
@@ -269,12 +285,26 @@ class Hub:
                     f"then call colab_connect with open_tab=false:\n{url}"
                 )
             self._event("open", "Opened " + (notebook_url or "a new scratch notebook") + " in the browser")
+            self.pending_tab_at = time.time()
+            self.pending_notebook = notebook_url
         connected = await self.frontend.wait_connected(wait, after_generation=generation if open_tab else None)
         if not connected:
-            return err(
-                f"No Colab tab connected within {wait:.0f} s. The tab is usually waiting for a Google sign-in "
-                "(look for a 'Sign in' prompt in it). After signing in, call colab_connect again."
-            )
+            if waiting_on_pending:
+                return err(
+                    f"The Colab tab opened {pending_for + wait:.0f} s ago has still not connected, so no further tab "
+                    "was opened. It is usually waiting for a Google sign-in: ask the user to sign in there, then "
+                    "call colab_connect again. If that tab was closed, call colab_connect with new_notebook=true."
+                )
+            if open_tab:
+                return err(
+                    f"Opened a Colab tab, but it did not connect within {wait:.0f} s. It is usually waiting for a "
+                    "Google sign-in (look for a 'Sign in' prompt in it). Ask the user to sign in there, then call "
+                    "colab_connect again; it will wait for that tab instead of opening another."
+                )
+            return err(f"No Colab tab connected within {wait:.0f} s.")
+        if waiting_on_pending:
+            self.notebook_url = self.pending_notebook or "new scratch notebook (not saved to Drive)"
+            self.runs.clear()
         if open_tab:
             self.notebook_url = notebook_url or "new scratch notebook (not saved to Drive)"
             self.runs.clear()
@@ -509,6 +539,7 @@ class Hub:
                 {
                     "name": "colab-claude-mcp",
                     "version": config.VERSION,
+                    "api": config.API_VERSION,
                     "pid": os.getpid(),
                     "connected": self.frontend.is_connected,
                 }

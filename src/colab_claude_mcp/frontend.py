@@ -147,6 +147,7 @@ class ColabFrontend:
         self.host = host
         self.generation = 0  # increases with every accepted tab
         self._on_change = on_change
+        self.last_close = ""  # why the last tab went away, for diagnostics
         self._conn: _Connection | None = None
         self._connected = asyncio.Event()
         self._server: websockets.Server | None = None
@@ -245,7 +246,9 @@ class ColabFrontend:
             if self._conn is conn:
                 self._conn = None
                 self._connected.clear()
-                log.info("Colab tab disconnected")
+                # 1001 = tab closed, reloaded or navigated away; 1006 = dropped without a close frame.
+                self.last_close = f"code {ws.close_code}" + (f", {ws.close_reason}" if ws.close_reason else "")
+                log.info("Colab tab disconnected (%s)", self.last_close)
                 self._notify(False)
 
     def _notify(self, connected: bool) -> None:

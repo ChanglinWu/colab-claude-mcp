@@ -73,10 +73,41 @@ async def test_notebook_url_must_be_colab(harness):
     assert harness.opened[0].startswith("https://colab.research.google.com/drive/abc#mcpProxyToken=")
 
 
-async def test_connect_times_out_when_the_tab_never_connects(harness):
+async def test_a_tab_waiting_for_sign_in_is_waited_for_not_duplicated(harness):
     harness.connect_tabs = False
-    result = await harness.hub.call("connect", {"wait_seconds": 1})
-    assert result["is_error"] and "Sign in" in result["text"]
+    first = await harness.hub.call("connect", {"wait_seconds": 0.5})
+    assert first["is_error"] and "Sign in" in first["text"]
+    second = await harness.hub.call("connect", {"wait_seconds": 0.5})
+    assert second["is_error"] and "no further tab" in second["text"]
+    assert len(harness.opened) == 1
+
+    async def sign_in_later():  # the user signs in; the same tab then connects
+        await asyncio.sleep(0.3)
+        tab = FakeColab(harness.hub.frontend.port, TOKEN)
+        harness.tabs.append(tab)
+        await tab.connect()
+
+    task = asyncio.create_task(sign_in_later())
+    third = await harness.hub.call("connect", {"wait_seconds": 5})
+    await task
+    assert not third["is_error"] and "Connected to Colab" in third["text"]
+    assert len(harness.opened) == 1
+    assert harness.hub.pending_tab_at is None
+
+
+async def test_new_notebook_ignores_a_pending_tab(harness):
+    harness.connect_tabs = False
+    await harness.hub.call("connect", {"wait_seconds": 0.3})
+    harness.connect_tabs = True
+    result = await harness.hub.call("connect", {"new_notebook": True, "wait_seconds": 5})
+    assert not result["is_error"] and len(harness.opened) == 2
+
+
+async def test_disconnect_reason_is_recorded(harness):
+    await harness.hub.call("connect", {"wait_seconds": 5})
+    await harness.tabs[0].close()
+    await asyncio.sleep(0.2)
+    assert "code 1000" in harness.hub.events[-1]["text"]
 
 
 async def test_add_run_returns_text_and_image(harness):

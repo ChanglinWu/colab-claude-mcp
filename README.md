@@ -104,8 +104,12 @@ uvx --from git+https://github.com/ChanglinWu/colab-claude-mcp colab-claude-mcp s
 
 ## Limits
 
-- The Colab page does not reconnect by itself. If the hub stops (reboot, `stop`, upgrade), the next
-  connect opens a new tab.
+- The Colab page does not reconnect by itself. If the hub stops (reboot, `stop`), or the tab is closed,
+  reloaded or signed out of Google, the next connect opens a new tab. An upgrade does not replace a hub
+  that has a tab connected; the new version takes over once that tab is gone.
+- If a newly opened tab is waiting for a Google sign-in, later connects wait for that tab (for up to
+  15 minutes) instead of opening more.
+- Disconnects are recorded with their close code in the mirror page's Activity list and in `hub.log`.
 - One notebook at a time. The most recently connected tab is the active one.
 - The tab uses whichever Google account that browser opens Colab with.
 - The mirror page is read-only and shows what the hub knows: cells and outputs as of the last sync

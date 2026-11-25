@@ -89,12 +89,19 @@ def _spawn_hub() -> None:
 
 
 async def ensure_hub(client: httpx.AsyncClient) -> None:
-    """Make sure a hub of this version is running, starting one if needed."""
+    """Make sure a usable hub is running, starting or replacing one if needed.
+
+    A hub of another version is replaced, because the mirror page and the fixes live in it. But
+    replacing a hub drops its Colab tab, and the Colab page does not reconnect by itself. So a hub
+    that has a tab connected and speaks the same API is left alone until that tab goes away.
+    """
     async with _hub_lock:
         health = await _health(client)
         if health and health.get("version") == config.VERSION:
             return
-        if health:  # an older hub: replace it (this drops its Colab tab connection)
+        if health and health.get("connected") and health.get("api", 1) == config.API_VERSION:
+            return
+        if health:  # an older hub with nothing to lose: replace it
             try:
                 await client.post(config.hub_url() + "/api/shutdown", headers=_auth(), timeout=3)
             except httpx.HTTPError:
