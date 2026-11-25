@@ -31,8 +31,9 @@
   .meta { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; min-width: 0; }
   label.follow { margin-left: auto; font-size: 12px; color: var(--muted); display: flex; gap: 5px; align-items: center; }
   main { max-width: 980px; margin: 0 auto; padding: 14px 16px 40px; }
+  section.cell { scroll-margin-top: 56px; }
   .empty { color: var(--muted); padding: 40px 0; text-align: center; }
-  .cell { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 10px; margin-bottom: 12px; }
+  .cell { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 8px; margin-bottom: 12px; }
   .gutter { font: 12px var(--mono); color: var(--muted); padding-top: 9px; text-align: right; }
   .gutter .state { display: block; margin-top: 3px; font-family: var(--sans); font-size: 11px; }
   .running .state { color: var(--run); font-weight: 600; }
@@ -48,7 +49,9 @@
   .outputs pre { max-height: 420px; overflow: auto; }
   .outputs .stderr { color: var(--muted); }
   .outputs .err { color: var(--bad); }
-  .outputs img { max-width: 100%; height: auto; background: #fff; border-radius: 4px; display: block; }
+  .outputs img { max-width: 100%; max-height: calc(100vh - 90px); width: auto; height: auto; object-fit: contain;
+    background: #fff; border-radius: 4px; display: block; cursor: zoom-in; }
+  .outputs img.full { max-height: none; cursor: zoom-out; }
   .outputs iframe { width: 100%; height: 120px; border: 0; background: #fff; border-radius: 4px; display: block; }
   details { max-width: 980px; margin: 0 auto 30px; padding: 0 16px; color: var(--muted); font-size: 12px; }
   summary { cursor: pointer; padding: 6px 0; }
@@ -96,6 +99,8 @@ function renderItem(item, cellId, n) {
     const img = document.createElement("img");
     img.src = "data:" + item.mime + ";base64," + item.data;
     img.alt = "Output image " + (n + 1) + " of cell " + cellId;
+    img.title = "Click to toggle full size";
+    img.addEventListener("click", () => img.classList.toggle("full"));
     return img;
   }
   if (item.kind === "html") {
@@ -103,7 +108,10 @@ function renderItem(item, cellId, n) {
     frame.setAttribute("sandbox", "allow-scripts");
     frame.title = "HTML output of cell " + cellId;
     frame.dataset.key = cellId + ":" + n;
-    frame.srcdoc = '<!doctype html><meta charset="utf-8"><style>body{margin:8px;font:14px system-ui,sans-serif}</style>' +
+    const room = Math.max(160, window.innerHeight - 230);
+    frame.srcdoc = '<!doctype html><meta charset="utf-8"><style>body{margin:8px;font:14px system-ui,sans-serif}' +
+      'img,svg,video,canvas{max-width:100%;max-height:' + room + 'px;width:auto;height:auto;object-fit:contain}' +
+      'table{max-width:100%}</style>' +
       item.html + '<script>new ResizeObserver(function(){parent.postMessage({mirrorKey:' +
       JSON.stringify(frame.dataset.key) + ',h:document.documentElement.scrollHeight},"*")}).observe(document.documentElement)<\/script>';
     return frame;
@@ -124,7 +132,7 @@ addEventListener("message", (event) => {
   if (!data || !data.mirrorKey) return;
   for (const frame of document.querySelectorAll("iframe")) {
     if (frame.dataset.key === data.mirrorKey && frame.contentWindow === event.source) {
-      frame.style.height = Math.min(Math.max(data.h, 40), 900) + "px";
+      frame.style.height = Math.min(Math.max(data.h, 40), Math.max(200, window.innerHeight - 70)) + "px";
     }
   }
 });

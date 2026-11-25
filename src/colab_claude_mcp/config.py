@@ -20,7 +20,7 @@ import os
 from pathlib import Path
 import secrets
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 
 COLAB = "https://colab.research.google.com"
 COLAB_ALT_DOMAIN = "https://colab.google.com"
