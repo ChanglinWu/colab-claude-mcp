@@ -1,8 +1,8 @@
-#  Contributions
+# Contributions
 
-We unfortunately don't have the bandwidth to support review of external contributions, and we 
-don't want user PRs to languish, so we aren't accepting any external contributions right now.
+This is a personal fork of [googlecolab/colab-mcp](https://github.com/googlecolab/colab-mcp).
+Issues and pull requests are welcome here for things specific to this fork (the hub, the mirror
+page, the Claude-facing tools).
 
-If you have a great idea or pain point, we would love to hear about it on our 
-[discussions](https://github.com/googlecolab/colab-mcp/discussions) page - the preferred place 
-for issue discussion and feature requests.
+For anything about the Colab page itself, such as which notebook operations it offers, use the
+upstream [discussions](https://github.com/googlecolab/colab-mcp/discussions).
