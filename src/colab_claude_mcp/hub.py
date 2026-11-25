@@ -597,7 +597,8 @@ class Hub:
             path = matlab_view.figure_path(matlab_dir, request.path_params["name"])
             if path is None:
                 return Response(status_code=404)
-            return FileResponse(path, media_type="image/png", headers={"Cache-Control": "private, max-age=3600"})
+            media = "application/pdf" if path.suffix == ".pdf" else "image/png"
+            return FileResponse(path, media_type=media, headers={"Cache-Control": "private, max-age=3600"})
 
         async def api_call(request: Request) -> Response:
             if not local(request) or not authorized(request):

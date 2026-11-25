@@ -125,7 +125,7 @@ toolboxes, for example finite element models with the PDE Toolbox.
 换 Claude 会话后工作区变量还在；图会以图片返回并保存为 PNG。每次运行的代码、输出、报错和图都显示在输出页面
 `http://localhost:47822/matlab` 上，在 Claude 内置浏览器里打开它，MATLAB 静默运行时它就是输出窗口。
 新图默认使用 IEEE Transactions 风格：单栏 3.5 in，Times New Roman 9 pt（坐标轴标签 10 pt），线型与颜色同时区分，
-灰度打印也能分清；`ccmcp.style('matlab')` 可恢复 MATLAB 默认风格。
+灰度打印也能分清；`ccmcp.style('matlab')` 可恢复 MATLAB 默认风格。投稿用图可加 `pdf=true`，同时导出嵌入字体的矢量 PDF。
 
 ### Install
 
@@ -150,7 +150,7 @@ Without the engine the Colab tools work as before and the MATLAB tools say how t
 | Tool | What it does |
 |---|---|
 | `matlab_connect` | Start or connect to the MATLAB session. A new session is headless unless `desktop=true`, which opens the MATLAB desktop so you can watch; without `desktop` a running session is used as it is; `session` connects to a session you shared yourself |
-| `matlab_eval` | Run `code` or a `.m` `script` in the base workspace. Returns printed output and attaches the figures the run made; returns early after `wait_seconds` |
+| `matlab_eval` | Run `code` or a `.m` `script` in the base workspace. Returns printed output and attaches the figures the run made; returns early after `wait_seconds`; `pdf=true` also saves each figure as a vector PDF |
 | `matlab_wait` | Wait for a run that is still going |
 | `matlab_interrupt` | Interrupt the run (like Ctrl+C); the workspace is kept |
 | `matlab_status` | Session, mode, current run, working folder, open figures and `whos` |
@@ -163,6 +163,7 @@ Without the engine the Colab tools work as before and the MATLAB tools say how t
 open it in the built-in browser; with MATLAB headless, it is the output window. It follows the newest
 run unless you untick *Follow newest run*, and links to the Colab mirror (which links back).
 
+- Figures saved as PDF (`pdf=true`) get a *Download vector PDF* link under them.
 - A run shows as running, with a timer, until it ends; then its output and figures appear. MATLAB hands
   printed output over only when a run ends, so there is no partial output.
 - It is served by the hub, next to the Colab mirror. The MATLAB tools start the hub when needed, and the
@@ -195,6 +196,11 @@ size; readable from a grayscale printout; at least 300 dpi for color and graysca
   overrides the style.
 - `pdeplot` applies its own `cool` colormap, which prints as an almost flat gray; pass
   `'ColorMap','parula'`.
+- For papers, `pdf=true` also saves each figure as a vector PDF next to its PNG (`exportgraphics`
+  with `'ContentType','vector'`, so fonts are embedded and even `pdeplot` fields stay vector; MATLAB's
+  automatic choice would turn those into one raster image). The result lists each PDF with its size.
+  Exports are cropped to their content, so a one-column figure is about 3.1 in wide: place it at its
+  natural size to keep 9/10 pt type, or at `\columnwidth` to enlarge it about 12 %.
 - In desktop mode, figures open as separate windows at their true size instead of docked tabs.
 - A MATLAB desktop you shared yourself is not restyled; run `ccmcp.style('ieee')` in it for the style.
 

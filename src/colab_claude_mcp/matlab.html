@@ -57,6 +57,8 @@
   .outputs img { max-width: 100%; max-height: calc(100vh - 90px); width: auto; height: auto; object-fit: contain;
     background: #fff; border-radius: 4px; display: block; cursor: zoom-in; }
   .outputs img.full { max-height: none; cursor: zoom-out; }
+  .outputs a.file { font-size: 12px; color: var(--accent); text-decoration: none; justify-self: start; margin-top: -4px; }
+  .outputs a.file:hover { text-decoration: underline; }
   @media (max-width: 560px) { .cell { grid-template-columns: 1fr; gap: 2px; } .gutter { text-align: left; padding-top: 0; }
     .gutter .state { display: inline; margin-left: 8px; } }
   @media (prefers-reduced-motion: no-preference) {
@@ -144,6 +146,15 @@ async function loadRun(run, entry) {
       img.addEventListener("click", () => img.classList.toggle("full"));
       img.addEventListener("load", refollow);
       items.push(img);
+      const pdf = name.replace(/\.png$/, ".pdf");
+      if ((data.pdfs || []).includes(pdf)) {
+        const link = document.createElement("a");
+        link.className = "file";
+        link.href = "/matlab/file/" + encodeURIComponent(pdf);
+        link.download = pdf; // Claude's built-in browser downloads PDFs anyway; say so up front
+        link.textContent = "Download vector PDF (figure " + (n + 1) + ")";
+        items.push(link);
+      }
     });
     if (data.note) items.push(block("p", data.note, "note"));
     if (data.status === "running") {

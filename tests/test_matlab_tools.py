@@ -55,3 +55,12 @@ def test_matlab_style_setting(monkeypatch):
     assert config.matlab_style() == "matlab"
     monkeypatch.setenv("COLAB_CLAUDE_MATLAB_STYLE", "nature")  # unknown: keep the default
     assert config.matlab_style() == "ieee"
+
+
+def test_pdf_size_reads_the_media_box(tmp_path):
+    pdf = tmp_path / "fig.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n1 0 obj << /Type /Page /MediaBox [0 0 224.1 177.84] >> endobj\n")
+    assert matlab_tools._pdf_size(pdf) == "3.11 x 2.47 in"
+    pdf.write_bytes(b"%PDF-1.5\nno readable box")
+    assert matlab_tools._pdf_size(pdf) == ""
+    assert matlab_tools._pdf_size(tmp_path / "missing.pdf") == ""

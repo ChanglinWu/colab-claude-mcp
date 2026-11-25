@@ -1,7 +1,8 @@
-function finish(outDir, prefix, which, closeAfter, resolution, refreshFolder)
+function finish(outDir, prefix, which, closeAfter, resolution, refreshFolder, pdf)
 %CCMCP.FINISH End a run from colab-claude-mcp: stop the diary and export figures to PNG.
 %   which is 'new' (figures made by the run), 'all' or 'none'. The PNG paths are written,
 %   one per line, to <outDir>/<prefix>.figs so that the MCP server can pick them up.
+%   pdf also saves each figure as a vector PDF with embedded fonts, next to its PNG.
 %   refreshFolder makes the MATLAB desktop show the real current folder again after run():
 %   run() returns to the original folder without telling the desktop.
     diary('off');
@@ -48,6 +49,9 @@ function finish(outDir, prefix, which, closeAfter, resolution, refreshFolder)
                 end
             end
             files{end + 1} = file; %#ok<AGROW>
+            if nargin >= 7 && pdf
+                exportPdf(h, [file(1:end - 4) '.pdf']);
+            end
         end
     end
     for k = 1:numel(figs)
@@ -71,4 +75,19 @@ function res = exportResolution(h, resolution)
     px = getpixelposition(h);
     widthInches = px(3) / get(groot, 'ScreenPixelsPerInch');
     res = max(72, min(resolution, floor(2400 / max(widthInches, 0.5))));
+end
+
+function exportPdf(h, file)
+% Vector output on purpose: 'auto' turns a figure with interpolated colors (a pdeplot field)
+% into one raster image without fonts. MATLAB warns that vector output of such content may be
+% slow; that warning is expected here.
+    state = warning('off', 'MATLAB:print:ContentTypeImageSuggested');
+    try
+        exportgraphics(h, file, 'ContentType', 'vector');
+    catch err
+        warning(state);
+        warning('ccmcp:export', 'Could not export figure as PDF: %s', err.message);
+        return
+    end
+    warning(state);
 end

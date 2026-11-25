@@ -20,7 +20,7 @@ import os
 from pathlib import Path
 import secrets
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 
 # Version of the HTTP API between the stdio server and the hub. A hub with a tab connected is
 # replaced only when this differs, so ordinary upgrades do not drop the tab.

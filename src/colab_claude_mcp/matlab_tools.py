@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 import io
 import os
 from pathlib import Path
+import re
 import secrets
 import subprocess
 import sys
@@ -71,6 +72,8 @@ fonts, font sizes, line widths or colors unless the user asks for them. Label ax
 (xlabel('V_{{DS}} (V)')) and add a legend for two or more lines. Two-column figure:
 figure('Units','inches','Position',[1 1 7.16 3]). pdeplot applies its own 'cool' colormap, which
 prints as flat gray: pass 'ColorMap','parula'. ccmcp.style('matlab') restores MATLAB's defaults.
+For figures meant for a paper, pass pdf=true: each figure is also saved as a vector PDF with
+embedded fonts. To put one in the user's project, copy it there under a descriptive name.
 Every run, with its code, printed output, errors and figures, appears on the MATLAB output page
 at {config.matlab_url()}. Open it in the built-in browser so the user can follow the runs there,
 especially when MATLAB runs headless.
@@ -268,6 +271,19 @@ def _figures(job: Job) -> list[Path]:
     return [Path(line) for line in lines if line.strip() and Path(line).exists()]
 
 
+def _pdf_size(path: Path) -> str:
+    """A PDF's page size in inches, from its MediaBox, or "" when it cannot be read."""
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return ""
+    box = re.search(rb"/MediaBox\s*\[\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s*\]", data)
+    if not box:
+        return ""
+    x0, y0, x1, y1 = (float(value) for value in box.groups())
+    return f"{(x1 - x0) / 72:.2f} x {(y1 - y0) / 72:.2f} in"
+
+
 def _outcome(job: Job) -> dict:
     """What a finished run produced. Worked out once; the tool result and the run record share it."""
     if job.outcome is not None:
@@ -294,6 +310,8 @@ def _outcome(job: Job) -> dict:
         "error": error,
         "figures": _figures(job),
     }
+    job.outcome["pdfs"] = [path.with_suffix(".pdf") for path in job.outcome["figures"]]
+    job.outcome["pdfs"] = [path for path in job.outcome["pdfs"] if path.is_file()]
     return job.outcome
 
 
@@ -309,6 +327,7 @@ def _write_record(job: Job) -> None:
             stderr=_clip(outcome["stderr"], 20_000),
             error=_clip(outcome["error"], 20_000),
             figures=[path.name for path in outcome["figures"]],
+            pdfs=[path.name for path in outcome["pdfs"]],
         )
     try:
         matlab_view.write_record(job.record, record)
@@ -366,7 +385,14 @@ def _report(job: Job) -> ToolResult:
         )
     if figures:
         lines += ["", f"Figures ({len(figures)}, {min(len(figures), MAX_IMAGES)} attached):"]
-        lines += [f"  {path}" for path in figures]
+        for path in figures:
+            lines.append(f"  {path}")
+            pdf = path.with_suffix(".pdf")
+            if pdf in outcome["pdfs"]:
+                size = _pdf_size(pdf)
+                lines.append(f"  {pdf} (vector PDF, fonts embedded{', ' + size if size else ''})")
+            elif job.meta.get("pdf"):
+                lines.append("  (no PDF: MATLAB could not export this figure as PDF)")
     lines += ["", f"Log: {job.log}"]
     job.reported = True
     text = "\n".join(lines)
@@ -505,6 +531,13 @@ def register(mcp: FastMCP, viewer: Callable[[], Awaitable[bool]] | None = None) 
                 le=1200,
             ),
         ] = 300,
+        pdf: Annotated[
+            bool,
+            Field(
+                description="Also save each exported figure as a vector PDF with embedded fonts, next to its PNG "
+                "(for papers: IEEE prefers vector graphics). The result lists each PDF and its size."
+            ),
+        ] = False,
     ) -> ToolResult:
         """Run MATLAB code or a .m script in the shared local MATLAB session. Returns the printed output and
         attaches the figures it made as images. Starts MATLAB (headless) if it is not running."""
@@ -550,6 +583,7 @@ def register(mcp: FastMCP, viewer: Callable[[], Awaitable[bool]] | None = None) 
             "session": _engine_name,
             "session_kind": "own" if own else "shared",
             "mode": mode,
+            "pdf": pdf,
         }
         out, err = io.StringIO(), io.StringIO()
         try:
@@ -559,7 +593,8 @@ def register(mcp: FastMCP, viewer: Callable[[], Awaitable[bool]] | None = None) 
             # folder without telling the desktop, which then keeps showing the script's folder.
             finish = engine.eval(
                 f"ccmcp.finish({_quote(runs)}, {_quote(job_id)}, {_quote(figures)}, "
-                f"{'true' if close_figures else 'false'}, {resolution}, {'true' if script else 'false'});",
+                f"{'true' if close_figures else 'false'}, {resolution}, {'true' if script else 'false'}, "
+                f"{'true' if pdf else 'false'});",
                 nargout=0,
                 background=True,
                 **_io(),

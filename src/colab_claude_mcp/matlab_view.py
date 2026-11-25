@@ -30,7 +30,7 @@ import re
 import time
 
 RUN_ID = re.compile(r"^run_\d{8}_\d{6}_[0-9a-f]{4}$")
-FIGURE = re.compile(r"^run_\d{8}_\d{6}_[0-9a-f]{4}_fig\d+\.png$")
+FIGURE = re.compile(r"^run_\d{8}_\d{6}_[0-9a-f]{4}_fig\d+\.(png|pdf)$")
 MAX_RUNS = 60
 # A record still says "running" although MATLAB has finished the run (it wrote the figure
 # list): the server that started it ended. Wait this long before taking over from it.
@@ -112,12 +112,14 @@ def _resolve(record: dict, folder: Path, session_running: bool) -> dict:
         except OSError:
             output = ""
         figures = [Path(line).name for line in manifest.read_text(encoding="utf-8").splitlines() if line.strip()]
+        figures = [name for name in figures if FIGURE.match(name)]
         return {
             **record,
             "status": "ended",
             "finished": finished,
             "output": output,
-            "figures": [name for name in figures if FIGURE.match(name)],
+            "figures": figures,
+            "pdfs": [name[:-4] + ".pdf" for name in figures if (folder / (name[:-4] + ".pdf")).is_file()],
             "note": "The Claude session that started this run ended before it did, so errors are not shown; "
             "the output is from the run log.",
         }
@@ -163,7 +165,7 @@ def run_detail(matlab_dir: Path, run_id: str) -> dict | None:
 
 
 def figure_path(matlab_dir: Path, name: str) -> Path | None:
-    """The PNG file of a run's figure, or None for any other name."""
+    """A run figure's PNG or PDF file, or None for any other name."""
     if not FIGURE.match(name):
         return None
     path = runs_dir(matlab_dir) / name

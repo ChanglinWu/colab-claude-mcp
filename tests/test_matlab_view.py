@@ -82,3 +82,26 @@ async def test_hub_serves_the_matlab_page(tmp_path):
         assert (await client.get("/matlab/run/nope")).status_code == 404
         foreign = await client.get("/matlab/state", headers={"Host": "evil.example"})
         assert foreign.status_code == 403
+
+
+def test_pdfs_are_served_and_found_for_runs_left_behind(tmp_path):
+    runs = _record(tmp_path / "matlab", pdf=True)
+    (runs / f"{RUN}.log").write_text("")
+    (runs / f"{RUN}_fig1.png").write_bytes(base64.b64decode(PNG))
+    (runs / f"{RUN}_fig1.pdf").write_bytes(b"%PDF-1.4\n")
+    manifest = runs / f"{RUN}.figs"
+    manifest.write_text(f"{runs / (RUN + '_fig1.png')}\n")
+    old = time.time() - matlab_view.ORPHAN_SECONDS - 1
+    os.utime(manifest, (old, old))
+    assert matlab_view.run_detail(tmp_path / "matlab", RUN)["pdfs"] == [f"{RUN}_fig1.pdf"]
+    assert matlab_view.figure_path(tmp_path / "matlab", f"{RUN}_fig1.pdf") == runs / f"{RUN}_fig1.pdf"
+    assert matlab_view.figure_path(tmp_path / "matlab", f"{RUN}_fig1.eps") is None
+
+
+async def test_hub_serves_pdfs_as_pdf(tmp_path):
+    runs = _record(tmp_path / "matlab", status="finished", finished=time.time())
+    (runs / f"{RUN}_fig1.pdf").write_bytes(b"%PDF-1.4\n")
+    transport = httpx.ASGITransport(app=Hub("test-token", 0, 0, home=tmp_path).app())
+    async with httpx.AsyncClient(transport=transport, base_url="http://localhost:47822") as client:
+        response = await client.get(f"/matlab/file/{RUN}_fig1.pdf")
+        assert response.status_code == 200 and response.headers["content-type"] == "application/pdf"
