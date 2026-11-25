@@ -37,11 +37,11 @@ import webbrowser
 
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse, Response
+from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from starlette.routing import Route
 import uvicorn
 
-from colab_claude_mcp import config, outputs
+from colab_claude_mcp import config, matlab_view, outputs
 from colab_claude_mcp.frontend import ColabFrontend, FrontendError, NotConnected
 
 log = logging.getLogger(__name__)
@@ -523,6 +523,9 @@ class Hub:
 
     def app(self) -> Starlette:
         mirror = (Path(__file__).parent / "mirror.html").read_text(encoding="utf-8")
+        matlab_page = (Path(__file__).parent / "matlab.html").read_text(encoding="utf-8")
+        matlab_dir = self.home / "matlab"
+        no_store = {"Cache-Control": "no-store"}
 
         def local(request: Request) -> bool:
             # Rejecting other Host values stops DNS-rebinding pages from reading the notebook.
@@ -566,6 +569,36 @@ class Hub:
                 headers={"Cache-Control": "no-store"},
             )
 
+        # The MATLAB output page. The runs are files written by the stdio servers (matlab_view).
+        # Watching it keeps the hub from idling out, like using the Colab tools does.
+        async def matlab_index(request: Request) -> Response:
+            if not local(request):
+                return Response(status_code=403)
+            self.last_activity = time.time()
+            return HTMLResponse(matlab_page)
+
+        async def matlab_state(request: Request) -> Response:
+            if not local(request):
+                return Response(status_code=403)
+            self.last_activity = time.time()
+            return JSONResponse(await asyncio.to_thread(matlab_view.runs_state, matlab_dir), headers=no_store)
+
+        async def matlab_run(request: Request) -> Response:
+            if not local(request):
+                return Response(status_code=403)
+            detail = await asyncio.to_thread(matlab_view.run_detail, matlab_dir, request.path_params["run_id"])
+            if detail is None:
+                return Response(status_code=404)
+            return JSONResponse(detail, headers=no_store)
+
+        async def matlab_file(request: Request) -> Response:
+            if not local(request):
+                return Response(status_code=403)
+            path = matlab_view.figure_path(matlab_dir, request.path_params["name"])
+            if path is None:
+                return Response(status_code=404)
+            return FileResponse(path, media_type="image/png", headers={"Cache-Control": "private, max-age=3600"})
+
         async def api_call(request: Request) -> Response:
             if not local(request) or not authorized(request):
                 return Response(status_code=403)
@@ -584,6 +617,10 @@ class Hub:
                 Route("/health", health),
                 Route("/state", state),
                 Route("/outputs/{cell_id}", cell_outputs),
+                Route("/matlab", matlab_index),
+                Route("/matlab/state", matlab_state),
+                Route("/matlab/run/{run_id}", matlab_run),
+                Route("/matlab/file/{name}", matlab_file),
                 Route("/api/call", api_call, methods=["POST"]),
                 Route("/api/shutdown", api_shutdown, methods=["POST"]),
             ]

@@ -1,10 +1,23 @@
-function finish(outDir, prefix, which, closeAfter, resolution)
+function finish(outDir, prefix, which, closeAfter, resolution, refreshFolder)
 %CCMCP.FINISH End a run from colab-claude-mcp: stop the diary and export figures to PNG.
 %   which is 'new' (figures made by the run), 'all' or 'none'. The PNG paths are written,
 %   one per line, to <outDir>/<prefix>.figs so that the MCP server can pick them up.
+%   refreshFolder makes the MATLAB desktop show the real current folder again after run():
+%   run() returns to the original folder without telling the desktop.
     diary('off');
+    if nargin >= 6 && refreshFolder && desktop('-inuse')
+        here = pwd;
+        parent = fileparts(here);
+        if ~strcmp(parent, here)
+            try
+                cd(parent);
+            catch
+            end
+            cd(here);
+        end
+    end
     if nargin < 5 || isempty(resolution)
-        resolution = 110;
+        resolution = 300;
     end
     files = {};
     figs = findall(groot, 'Type', 'figure');
@@ -23,11 +36,12 @@ function finish(outDir, prefix, which, closeAfter, resolution)
                 continue
             end
             file = fullfile(outDir, sprintf('%s_fig%d.png', prefix, numel(files) + 1));
+            res = exportResolution(h, resolution);
             try
-                exportgraphics(h, file, 'Resolution', resolution);
+                exportgraphics(h, file, 'Resolution', res);
             catch
                 try
-                    print(h, file, '-dpng', sprintf('-r%d', resolution));
+                    print(h, file, '-dpng', sprintf('-r%d', res));
                 catch err
                     warning('ccmcp:export', 'Could not export figure: %s', err.message);
                     continue
@@ -49,4 +63,12 @@ function finish(outDir, prefix, which, closeAfter, resolution)
         fprintf(fid, '%s\n', files{:});
         fclose(fid);
     end
+end
+
+function res = exportResolution(h, resolution)
+% A large figure (docked in the desktop, or full screen) is exported at a lower resolution, so
+% that its PNG stays under about 2400 px wide. One-column (3.5 in) figures keep the full value.
+    px = getpixelposition(h);
+    widthInches = px(3) / get(groot, 'ScreenPixelsPerInch');
+    res = max(72, min(resolution, floor(2400 / max(widthInches, 0.5))));
 end

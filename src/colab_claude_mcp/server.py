@@ -259,7 +259,24 @@ async def move_cell(
     return await hub_call("move_cell", {"cell_id": cell_id, "cell_index": cell_index})
 
 
-matlab_tools.register(mcp)
+async def _ensure_viewer() -> str | None:
+    """Start the hub, which also serves the MATLAB output page. Returns why the page is unavailable, or None."""
+    try:
+        async with httpx.AsyncClient() as client:
+            await ensure_hub(client)
+            response = await client.get(config.hub_url() + "/matlab/state", timeout=5)
+    except (RuntimeError, httpx.HTTPError) as error:
+        return f"the hub did not start ({error}); see {config.home() / 'hub.log'}"
+    if response.status_code == 200:
+        return None
+    # ensure_hub keeps an older hub that has a Colab tab connected, so as not to drop the tab.
+    return (
+        "an older hub without this page is still running because a Colab tab is connected to it; the new hub "
+        "takes over once that tab is closed (or after `colab-claude-mcp stop`, which disconnects the tab)"
+    )
+
+
+matlab_tools.register(mcp, _ensure_viewer)
 
 
 def run_stdio() -> None:

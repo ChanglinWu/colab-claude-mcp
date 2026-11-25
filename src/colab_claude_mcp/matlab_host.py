@@ -84,6 +84,8 @@ def run_host(desktop: bool) -> int:
     if not desktop:
         # No windows pop up; figures are still drawn and exported as PNG.
         engine.eval("set(groot, 'defaultFigureVisible', 'off');", nargout=0)
+    if config.matlab_style() == "ieee":
+        engine.eval("ccmcp.style('auto');", nargout=0)
     engine.eval(f"matlab.engine.shareEngine('{name}');", nargout=0)
     state = {
         "name": name,

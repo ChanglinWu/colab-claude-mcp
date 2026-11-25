@@ -122,7 +122,10 @@ The same server can also run MATLAB code in a MATLAB installed on this computer,
 toolboxes, for example finite element models with the PDE Toolbox.
 
 中文：同一个 MCP 也能驱动本机 MATLAB（含全部工具箱，例如用 PDE Toolbox 做有限元仿真）。MATLAB 会话常驻，
-换 Claude 会话后工作区变量还在；图会以图片返回并保存为 PNG。
+换 Claude 会话后工作区变量还在；图会以图片返回并保存为 PNG。每次运行的代码、输出、报错和图都显示在输出页面
+`http://localhost:47822/matlab` 上，在 Claude 内置浏览器里打开它，MATLAB 静默运行时它就是输出窗口。
+新图默认使用 IEEE Transactions 风格：单栏 3.5 in，Times New Roman 9 pt（坐标轴标签 10 pt），线型与颜色同时区分，
+灰度打印也能分清；`ccmcp.style('matlab')` 可恢复 MATLAB 默认风格。
 
 ### Install
 
@@ -146,12 +149,54 @@ Without the engine the Colab tools work as before and the MATLAB tools say how t
 
 | Tool | What it does |
 |---|---|
-| `matlab_connect` | Start or connect to the MATLAB session. Headless by default; `desktop=true` opens the MATLAB desktop so you can watch; `session` connects to a session you shared yourself |
+| `matlab_connect` | Start or connect to the MATLAB session. A new session is headless unless `desktop=true`, which opens the MATLAB desktop so you can watch; without `desktop` a running session is used as it is; `session` connects to a session you shared yourself |
 | `matlab_eval` | Run `code` or a `.m` `script` in the base workspace. Returns printed output and attaches the figures the run made; returns early after `wait_seconds` |
 | `matlab_wait` | Wait for a run that is still going |
 | `matlab_interrupt` | Interrupt the run (like Ctrl+C); the workspace is kept |
 | `matlab_status` | Session, mode, current run, working folder, open figures and `whos` |
 | `matlab_stop` | Quit the session (the workspace is lost) |
+
+### Output page
+
+`http://localhost:47822/matlab` shows the MATLAB runs like a notebook, newest last: each run's code
+(or script), printed output, warnings, errors and figures, with its status and run time. Ask Claude to
+open it in the built-in browser; with MATLAB headless, it is the output window. It follows the newest
+run unless you untick *Follow newest run*, and links to the Colab mirror (which links back).
+
+- A run shows as running, with a timer, until it ends; then its output and figures appear. MATLAB hands
+  printed output over only when a run ends, so there is no partial output.
+- It is served by the hub, next to the Colab mirror. The MATLAB tools start the hub when needed, and the
+  hub stays up while the page is open.
+- The page reads the run records (`<run id>.json`) in `~/.colab-claude-mcp/matlab/runs/`, so runs from
+  earlier Claude sessions are listed too (the last 60). If the Claude session that started a run ends
+  first, MATLAB still finishes the run and the page completes it from its log, without the error text.
+- An upgrade does not replace a hub that has a Colab tab connected. Until that tab is closed, an older
+  hub without this page may keep running; `matlab_connect` says so.
+
+### Plot style
+
+New figures in the MATLAB session these tools start follow IEEE's graphics guidelines for journal
+articles (IEEE Author Center: one column 3.5 in, two columns 7.16 in; type of about 9–10 pt at full
+size; readable from a grayscale printout; at least 300 dpi for color and grayscale images):
+
+| | |
+|---|---|
+| Size | 3.5 × 2.6 in, one column. Two columns: `figure('Units','inches','Position',[1 1 7.16 3])` |
+| Type | Times New Roman 9 pt; axis labels and titles 10 pt, normal weight |
+| Lines | 1.25 pt and opaque; axes 0.5 pt, boxed, ticks inside; grid lines (when on) 15 % black |
+| Telling lines apart | color and line style change together: black solid, blue dashed, red dash-dot, wine dotted, olive solid, pink dashed, … |
+| Colors | black, then `#0072B2 #CC3311 #882255 #999933 #CC79A7`: checked for color-vision deficiency (worst pair ΔE 9.6, OKLab ×100) and ≥ 3:1 contrast on white. Colors that look alike in grayscale (blue/red, olive/pink) never share a line style |
+| PNG export | 300 dpi; figures wider than about 8 in get less, to keep the PNG under about 2400 px |
+
+- `ccmcp.style('matlab')` switches the session to MATLAB's defaults and `ccmcp.style('ieee')` back. The
+  choice holds for the session, also when later Claude sessions reconnect. Set
+  `COLAB_CLAUDE_MATLAB_STYLE=matlab` to start new sessions with MATLAB's defaults.
+- Figures that are already open keep their look, and code that sets its own fonts, sizes or colors
+  overrides the style.
+- `pdeplot` applies its own `cool` colormap, which prints as an almost flat gray; pass
+  `'ColorMap','parula'`.
+- In desktop mode, figures open as separate windows at their true size instead of docked tabs.
+- A MATLAB desktop you shared yourself is not restyled; run `ccmcp.style('ieee')` in it for the style.
 
 ### How it works
 
@@ -172,6 +217,7 @@ To let Claude work in a MATLAB desktop you opened yourself, run
 |---|---|---|
 | `COLAB_CLAUDE_MATLAB_SESSION` | `colab_claude_mcp` | Name of the shared MATLAB session |
 | `COLAB_CLAUDE_MATLAB_OPTIONS` | none | Extra MATLAB startup options, such as `-sd /path/to/project` |
+| `COLAB_CLAUDE_MATLAB_STYLE` | `ieee` | Look of new figures: `ieee` (IEEE Transactions) or `matlab` (MATLAB's defaults) |
 
 Run code, logs (`.m`, `.log`) and figures (`.png`) are kept in `~/.colab-claude-mcp/matlab/runs/`;
 the host logs to `~/.colab-claude-mcp/matlab/host.log`.
@@ -179,6 +225,9 @@ the host logs to `~/.colab-claude-mcp/matlab/host.log`.
 ### Limits
 
 - MATLAB runs one thing at a time. Runs from two Claude sessions queue in MATLAB.
+- In desktop mode you see the figures (docked in the Figures window, left open), the workspace and the
+  current folder change, but not the commands Claude runs or their printed output: the engine sends
+  those back to Claude, not to the Command Window.
 - MATLAB hands printed output to the engine when a run ends, so a run that is still going shows no
   partial output. For progress on long runs, write to a file.
 - `code` is run with `eval`: several lines are fine, local functions are not. Use `script` for those.

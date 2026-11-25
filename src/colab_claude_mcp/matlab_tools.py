@@ -27,6 +27,7 @@ sys.stdout, which here is the MCP stdio channel.
 
 import asyncio
 import base64
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 import io
 import os
@@ -42,7 +43,7 @@ from fastmcp.tools.tool import ToolResult
 from mcp.types import ImageContent, TextContent
 from pydantic import Field
 
-from colab_claude_mcp import config, matlab_host
+from colab_claude_mcp import config, matlab_host, matlab_view
 
 INSTALL_HINT = """\
 MATLAB Engine for Python is not installed in this MCP server's environment, so the MATLAB tools
@@ -56,7 +57,7 @@ Python 3.14 or older (the engine does not support 3.15 yet), for example for R20
 matlabengine versions: R2026b = 26.2, R2026a = 26.1, R2025b = 25.2, R2025a = 25.1.
 """
 
-INSTRUCTIONS = """
+INSTRUCTIONS = f"""
 MATLAB (local): matlab_eval runs MATLAB code in a MATLAB session on this computer, with all
 installed toolboxes (for finite element work, the PDE Toolbox: createpde / femodel, geometry,
 generateMesh, solve, pdeplot). The session stays open across Claude sessions, so variables
@@ -64,10 +65,21 @@ survive between calls; matlab_connect starts it (headless by default, desktop=tr
 MATLAB desktop so the user can watch). Figures made by a run are returned as images and saved
 as PNG. Runs longer than wait_seconds keep going; use matlab_wait or matlab_interrupt. For long
 code, write a .m file and pass it as script. matlab_status shows the session and workspace.
+New figures in the session use an IEEE Transactions style: one column (3.5 in) wide, Times New
+Roman 9 pt with 10 pt axis labels, lines told apart by line style as well as color. So do not set
+fonts, font sizes, line widths or colors unless the user asks for them. Label axes with units
+(xlabel('V_{{DS}} (V)')) and add a legend for two or more lines. Two-column figure:
+figure('Units','inches','Position',[1 1 7.16 3]). pdeplot applies its own 'cool' colormap, which
+prints as flat gray: pass 'ColorMap','parula'. ccmcp.style('matlab') restores MATLAB's defaults.
+Every run, with its code, printed output, errors and figures, appears on the MATLAB output page
+at {config.matlab_url()}. Open it in the built-in browser so the user can follow the runs there,
+especially when MATLAB runs headless.
 """
 
 MAX_IMAGES = 6
 MAX_TEXT = 16_000
+RECORD_TEXT = 200_000  # printed output kept in a run record for the output page
+SCRIPT_TEXT = 100_000  # script source kept in a run record
 
 
 class MatlabUnavailable(RuntimeError):
@@ -85,8 +97,12 @@ class Job:
     finish: Any
     out: io.StringIO
     err: io.StringIO
+    record: Path  # the run record that the MATLAB output page reads
+    meta: dict  # what the record says about the run besides its result
     started: float = field(default_factory=time.time)
     reported: bool = False
+    outcome: dict | None = None
+    recorded: bool = False
 
     def done(self) -> bool:
         return self.finish.done()
@@ -96,6 +112,11 @@ _engine: Any = None
 _engine_name: str | None = None
 _lock = asyncio.Lock()
 _job: Job | None = None
+_tasks: set[asyncio.Task] = set()
+# Starts the hub that serves the output page; returns why the page is unavailable, or None.
+_viewer: Callable[[], Awaitable[str | None]] | None = None
+_viewer_ok: bool | None = None
+_viewer_problem = ""
 
 
 def _import_engine():
@@ -158,9 +179,12 @@ async def _wait_for(engine_mod, name: str, present: bool, seconds: float) -> boo
 
 
 async def _connect(
-    desktop: bool = False, restart: bool = False, session: str | None = None, wait_seconds: float = 180
+    desktop: bool | None = None, restart: bool = False, session: str | None = None, wait_seconds: float = 180
 ) -> tuple[Any, list[str]]:
-    """Connect to the shared MATLAB session, starting it if needed. Returns the engine and notes."""
+    """Connect to the shared MATLAB session, starting it if needed. Returns the engine and notes.
+
+    desktop=None takes the running session as it is and starts a new one headless.
+    """
     global _engine, _engine_name
     engine_mod = _import_engine()
     own = config.matlab_session()
@@ -178,7 +202,7 @@ async def _connect(
             if name != own:
                 listed = ", ".join(names) or "none"
                 raise RuntimeError(f"No shared MATLAB session named {name!r}. Shared sessions: {listed}.")
-            _spawn_host(desktop)
+            _spawn_host(bool(desktop))
             notes.append(f"Started MATLAB ({'desktop' if desktop else 'headless'}).")
             if not await _wait_for(engine_mod, name, True, wait_seconds):
                 raise RuntimeError(
@@ -186,7 +210,7 @@ async def _connect(
                     f"See {config.matlab_home() / 'host.log'} and {config.matlab_home() / 'host.out'}."
                 )
             _engine = None
-        elif name == own and state.get("mode") and (state["mode"] == "desktop") != desktop:
+        elif desktop is not None and name == own and state.get("mode") and (state["mode"] == "desktop") != desktop:
             notes.append(
                 f"MATLAB is already running in {state['mode']} mode; pass restart=true to switch "
                 f"(that clears the workspace)."
@@ -195,6 +219,9 @@ async def _connect(
             _engine = await asyncio.to_thread(engine_mod.connect_matlab, name)
             _engine_name = name
             await asyncio.to_thread(_engine.addpath, str(matlab_host.MFILES), nargout=0, **_io())
+            if name == own and config.matlab_style() == "ieee":
+                # 'auto' leaves a style that was chosen in the session alone
+                await asyncio.to_thread(_engine.eval, "ccmcp.style('auto');", nargout=0, **_io())
     return _engine, notes
 
 
@@ -241,8 +268,10 @@ def _figures(job: Job) -> list[Path]:
     return [Path(line) for line in lines if line.strip() and Path(line).exists()]
 
 
-def _report(job: Job) -> ToolResult:
-    elapsed = time.time() - job.started
+def _outcome(job: Job) -> dict:
+    """What a finished run produced. Worked out once; the tool result and the run record share it."""
+    if job.outcome is not None:
+        return job.outcome
     error = ""
     interrupted = False
     try:
@@ -257,18 +286,79 @@ def _report(job: Job) -> ToolResult:
         job.finish.result()
     except Exception as exc:  # noqa: BLE001
         stderr += f"\n(figure export failed: {exc})"
+    job.outcome = {
+        "status": "interrupted" if interrupted else ("failed" if error else "finished"),
+        "finished": time.time(),
+        "output": job.out.getvalue(),
+        "stderr": "" if error else stderr,  # with an error, stderr holds the error message
+        "error": error,
+        "figures": _figures(job),
+    }
+    return job.outcome
 
-    output = job.out.getvalue()
-    status = "was interrupted" if interrupted else ("failed" if error else "finished")
+
+def _write_record(job: Job) -> None:
+    """Write the run record: "running" while the run goes, its result once it has ended."""
+    record = {"id": job.id, "started": job.started, "finished": None, "status": "running", **job.meta}
+    if job.outcome is not None:
+        outcome = job.outcome
+        record.update(
+            status=outcome["status"],
+            finished=outcome["finished"],
+            output=_clip(outcome["output"], RECORD_TEXT),
+            stderr=_clip(outcome["stderr"], 20_000),
+            error=_clip(outcome["error"], 20_000),
+            figures=[path.name for path in outcome["figures"]],
+        )
+    try:
+        matlab_view.write_record(job.record, record)
+    except OSError:
+        pass  # the page is a convenience; never fail a run over it
+
+
+def _finalize(job: Job) -> dict:
+    outcome = _outcome(job)
+    if not job.recorded:
+        job.recorded = True
+        _write_record(job)
+    return outcome
+
+
+async def _watch(job: Job) -> None:
+    """Record the end of a run even when nobody is waiting for it (it outlived wait_seconds)."""
+    while not job.done():
+        await asyncio.sleep(0.25)
+    _finalize(job)
+
+
+async def _viewer_url(check: bool = False) -> str | None:
+    """Make sure the hub that serves the MATLAB output page runs. Returns the page URL, or None."""
+    global _viewer_ok, _viewer_problem
+    if _viewer is None:
+        return None
+    if check or _viewer_ok is None:
+        try:
+            problem = await _viewer()
+        except Exception as error:  # noqa: BLE001
+            problem = f"{type(error).__name__}: {error}"
+        _viewer_ok, _viewer_problem = problem is None, problem or ""
+    return config.matlab_url() if _viewer_ok else None
+
+
+def _report(job: Job) -> ToolResult:
+    outcome = _finalize(job)
+    elapsed = outcome["finished"] - job.started
+    output, stderr, error = outcome["output"], outcome["stderr"], outcome["error"]
+    status = {"interrupted": "was interrupted", "failed": "failed"}.get(outcome["status"], "finished")
     lines = [f"MATLAB run {job.id} ({job.label}) {status} after {elapsed:.1f} s."]
     if output.strip():
         lines += ["", _clip(output.rstrip())]
-    if stderr and not error:
+    if stderr:
         lines += ["", "stderr / warnings:", _clip(stderr, 4_000)]
     if error:
         lines += ["", "Error:", _clip(error, 6_000)]
 
-    figures = _figures(job)
+    figures = outcome["figures"]
     images = []
     for path in figures[:MAX_IMAGES]:
         images.append(
@@ -309,15 +399,28 @@ def _error(text: str) -> ToolResult:
     return ToolResult(content=[TextContent(type="text", text="ERROR: " + text)])
 
 
-def register(mcp: FastMCP) -> None:
+def _script_text(path: Path) -> str:
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    return text if len(text) <= SCRIPT_TEXT else text[:SCRIPT_TEXT] + "\n% ... (rest of the script not shown)"
+
+
+def register(mcp: FastMCP, viewer: Callable[[], Awaitable[bool]] | None = None) -> None:
+    """Add the MATLAB tools. viewer starts the hub that serves the MATLAB output page."""
+    global _viewer
+    _viewer = viewer
+
     @mcp.tool
     async def matlab_connect(
         desktop: Annotated[
-            bool,
+            bool | None,
             Field(
-                description="Open the MATLAB desktop (the user can watch figures appear) instead of a headless session."
+                description="true: the MATLAB desktop (the user can watch figures and variables appear); false: "
+                "headless. Omit to use the running session as it is (a new one starts headless)."
             ),
-        ] = False,
+        ] = None,
         restart: Annotated[
             bool, Field(description="Quit the running session first (clears the workspace). Needed to switch mode.")
         ] = False,
@@ -337,7 +440,8 @@ def register(mcp: FastMCP) -> None:
             info = io.StringIO()
             await asyncio.to_thread(
                 engine.eval,
-                "fprintf('%s\\n%s\\n%d\\n', version, pwd, license('test','PDE_Toolbox') && ~isempty(ver('pde')));",
+                "fprintf('%s\\n%s\\n%d\\n%s\\n', version, pwd, license('test','PDE_Toolbox') && ~isempty(ver('pde')), "
+                "char(string(getappdata(groot, 'ccmcp_style'))));",
                 nargout=0,
                 stdout=info,
                 stderr=io.StringIO(),
@@ -346,16 +450,24 @@ def register(mcp: FastMCP) -> None:
             return _error(str(error))
         except Exception as error:  # noqa: BLE001
             return _error(f"{type(error).__name__}: {error}")
-        release, cwd, pde = (info.getvalue().splitlines() + ["", "", ""])[:3]
+        release, cwd, pde, style = (info.getvalue().splitlines() + ["", "", "", ""])[:4]
         state = matlab_host.read_state()
         mode = (
             state.get("mode", "shared by the user") if _engine_name == config.matlab_session() else "shared by the user"
         )
+        url = await _viewer_url(check=True)
         lines = notes + [
             f"Connected to MATLAB {release} (session {_engine_name!r}, {mode}).",
             f"Working folder: {cwd}",
             f"PDE Toolbox: {'available' if pde.strip() == '1' else 'not available'}",
+            "Plot style: IEEE Transactions (3.5 in one-column figures, Times New Roman 9/10 pt); "
+            "ccmcp.style('matlab') restores MATLAB's defaults"
+            if style.strip() == "ieee"
+            else "Plot style: MATLAB's defaults; ccmcp.style('ieee') switches to the IEEE Transactions style",
             f"Run logs and figures: {config.matlab_home() / 'runs'}",
+            f"Output page (open it in the built-in browser to follow the runs): {url}"
+            if url
+            else f"Output page: not available ({_viewer_problem}).",
         ]
         return ToolResult(content=[TextContent(type="text", text="\n".join(lines))])
 
@@ -384,7 +496,15 @@ def register(mcp: FastMCP) -> None:
             bool | None,
             Field(description="Close exported figures afterwards. Default: yes when headless, no in desktop mode."),
         ] = None,
-        resolution: Annotated[int, Field(description="PNG resolution in dpi.", ge=50, le=600)] = 110,
+        resolution: Annotated[
+            int,
+            Field(
+                description="PNG resolution in dpi. IEEE asks for at least 300 (600 for black-and-white line art). "
+                "Figures wider than about 8 in get less, to keep the PNG under about 2400 px wide.",
+                ge=50,
+                le=1200,
+            ),
+        ] = 300,
     ) -> ToolResult:
         """Run MATLAB code or a .m script in the shared local MATLAB session. Returns the printed output and
         attaches the figures it made as images. Starts MATLAB (headless) if it is not running."""
@@ -409,21 +529,37 @@ def register(mcp: FastMCP) -> None:
         except Exception as error:  # noqa: BLE001
             return _error(f"Could not reach MATLAB: {type(error).__name__}: {error}")
 
+        url = await _viewer_url()
+        if notes and url:
+            notes.append(f"Output page (open it in the built-in browser to follow the runs): {url}")
+
         runs = config.matlab_home() / "runs"
         runs.mkdir(exist_ok=True)
         job_id = time.strftime("run_%Y%m%d_%H%M%S_") + secrets.token_hex(2)
         log = runs / f"{job_id}.log"
         (runs / f"{job_id}.m").write_text(statement if code else f"% {path}\n{statement}\n")
+        own = _engine_name == config.matlab_session()
+        mode = matlab_host.read_state().get("mode") if own else "shared"
         if close_figures is None:  # keep figures open where the user can see them
-            own = _engine_name == config.matlab_session()
-            close_figures = own and matlab_host.read_state().get("mode") != "desktop"
+            close_figures = own and mode != "desktop"
+        meta = {
+            "label": label,
+            "kind": "script" if script else "code",
+            "code": _script_text(path) if script else code,
+            "script": str(path) if script else None,
+            "session": _engine_name,
+            "session_kind": "own" if own else "shared",
+            "mode": mode,
+        }
         out, err = io.StringIO(), io.StringIO()
         try:
             begin = engine.eval(f"ccmcp.begin({_quote(log)});", nargout=0, background=True, **_io())
             run = engine.eval(statement, nargout=0, background=True, stdout=out, stderr=err)
+            # After a script, refresh the desktop's folder bar: run() goes back to the original
+            # folder without telling the desktop, which then keeps showing the script's folder.
             finish = engine.eval(
                 f"ccmcp.finish({_quote(runs)}, {_quote(job_id)}, {_quote(figures)}, "
-                f"{'true' if close_figures else 'false'}, {resolution});",
+                f"{'true' if close_figures else 'false'}, {resolution}, {'true' if script else 'false'});",
                 nargout=0,
                 background=True,
                 **_io(),
@@ -431,7 +567,13 @@ def register(mcp: FastMCP) -> None:
         except Exception as error:  # noqa: BLE001 - e.g. a stale connection after MATLAB restarted
             _engine = None
             return _error(f"Could not start the run (try again to reconnect): {type(error).__name__}: {error}")
-        _job = Job(job_id, label, log, runs / f"{job_id}.figs", begin, run, finish, out, err)
+        _job = Job(
+            job_id, label, log, runs / f"{job_id}.figs", begin, run, finish, out, err, runs / f"{job_id}.json", meta
+        )
+        _write_record(_job)
+        watcher = asyncio.get_running_loop().create_task(_watch(_job))
+        _tasks.add(watcher)
+        watcher.add_done_callback(_tasks.discard)
         result = await _wait_job(_job, wait_seconds)
         if notes:
             result.content.insert(0, TextContent(type="text", text="\n".join(notes)))
@@ -478,6 +620,9 @@ def register(mcp: FastMCP) -> None:
         others = [name for name in names if name != own]
         if others:
             lines.append("Other shared MATLAB sessions: " + ", ".join(others))
+        url = await _viewer_url()
+        if url:
+            lines.append(f"Output page: {url}")
         if _job and not _job.done():
             lines.append(f"Run {_job.id} ({_job.label}) is going, {time.time() - _job.started:.0f} s so far.")
             partial = _tail(_job.log, 2_000)

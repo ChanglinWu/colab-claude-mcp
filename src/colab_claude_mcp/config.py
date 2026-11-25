@@ -20,7 +20,7 @@ import os
 from pathlib import Path
 import secrets
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 
 # Version of the HTTP API between the stdio server and the hub. A hub with a tab connected is
 # replaced only when this differs, so ordinary upgrades do not drop the tab.
@@ -55,6 +55,11 @@ def hub_url() -> str:
 
 def mirror_url() -> str:
     return f"http://localhost:{http_port()}/"
+
+
+def matlab_url() -> str:
+    """The MATLAB output page, served by the hub next to the Colab mirror."""
+    return f"http://localhost:{http_port()}/matlab"
 
 
 def browser() -> str | None:
@@ -92,6 +97,12 @@ def matlab_home() -> Path:
     path = home() / "matlab"
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def matlab_style() -> str:
+    """Look of new MATLAB figures: "ieee" (IEEE Transactions, the default) or "matlab" (MATLAB's own)."""
+    value = os.environ.get("COLAB_CLAUDE_MATLAB_STYLE", "ieee").strip().lower()
+    return value if value in ("ieee", "matlab") else "ieee"
 
 
 def matlab_options() -> str:
