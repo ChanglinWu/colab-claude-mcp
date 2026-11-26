@@ -10,8 +10,13 @@ function style(name)
 %                            dash-dot, wine dotted, olive solid, pink dashed, ...
 %                          - colors checked for color-vision deficiency and >= 3:1 contrast on white
 %                          - 1.25 pt data lines, 0.5 pt axes, boxed axes with ticks inside
-%   ccmcp.style('matlab')  MATLAB's own defaults.
-%   ccmcp.style('auto')    'ieee', unless a style was already chosen in this session.
+%                          - the light figure theme, also while the operating system is in dark
+%                            mode (MATLAB R2025a and later would otherwise give new figures the
+%                            dark theme, on which the black text and axes disappear). This uses
+%                            the session-only value of the figure-theme setting; nothing is saved.
+%   ccmcp.style('matlab')  MATLAB's own defaults, including the theme that follows the system.
+%   ccmcp.style('auto')    'ieee', unless a style was already chosen in this session; then it
+%                          only makes sure an 'ieee' session keeps the light theme.
 %   Figures that already exist keep their look.
     if nargin < 1
         name = 'ieee';
@@ -19,6 +24,9 @@ function style(name)
     name = lower(char(name));
     if strcmp(name, 'auto')
         if isappdata(groot, 'ccmcp_style')
+            if strcmp(getappdata(groot, 'ccmcp_style'), 'ieee')
+                lightFigures(true);   % sessions styled before the theme handling existed
+            end
             return
         end
         name = 'ieee';
@@ -33,6 +41,7 @@ function style(name)
                     % a property this MATLAB release does not have
                 end
             end
+            lightFigures(true);
         case 'matlab'
             for k = 1:2:numel(defaults)
                 try
@@ -40,10 +49,32 @@ function style(name)
                 catch
                 end
             end
+            lightFigures(false);
         otherwise
             error('ccmcp:style', 'Unknown style "%s". Use ''ieee'' or ''matlab''.', name);
     end
     setappdata(groot, 'ccmcp_style', name);
+end
+
+function lightFigures(on)
+%LIGHTFIGURES Give new figures the light theme for this session (on) or the system's again (off).
+%   Uses the TemporaryValue of the figure-theme setting, which lasts until MATLAB quits and is
+%   never saved. Releases without figure themes (before R2025a) are left alone.
+    try
+        s = settings;
+        group = s.matlab.appearance.figure;
+        if ~hasSetting(group, 'GraphicsTheme')
+            return
+        end
+        figureTheme = group.GraphicsTheme;
+        if on
+            figureTheme.TemporaryValue = "light";
+        elseif hasTemporaryValue(figureTheme)
+            clearTemporaryValue(figureTheme);
+        end
+    catch
+        % a settings layout this release does not have: keep MATLAB's theme
+    end
 end
 
 function defaults = ieeeDefaults()

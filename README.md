@@ -125,7 +125,7 @@ toolboxes, for example finite element models with the PDE Toolbox.
 换 Claude 会话后工作区变量还在；图会以图片返回并保存为 PNG。每次运行的代码、输出、报错和图都显示在输出页面
 `http://localhost:47822/matlab` 上，在 Claude 内置浏览器里打开它，MATLAB 静默运行时它就是输出窗口。
 新图默认使用 IEEE Transactions 风格：单栏 3.5 in，Times New Roman 9 pt（坐标轴标签 10 pt），线型与颜色同时区分，
-灰度打印也能分清；`ccmcp.style('matlab')` 可恢复 MATLAB 默认风格。投稿用图可加 `pdf=true`，同时导出嵌入字体的矢量 PDF。
+灰度打印也能分清；macOS 处于深色模式时也保持浅色主题（只在本次 MATLAB 会话有效，不保存设置）；`ccmcp.style('matlab')` 可恢复 MATLAB 默认风格。投稿用图可加 `pdf=true`，同时导出嵌入字体的矢量 PDF。
 默认 `COLAB_CLAUDE_ACCEL=auto`：任务允许时，Claude 会主动用并行池（`ccmcp.pool`，默认进程池，用满全部核心）或 GPU 计算，
 Colab 里则用运行时自带的 GPU/TPU，并在回复里说明用了什么；设为 `off` 则一律串行、只用 CPU，除非你明确要求。
 MATLAB 只支持 NVIDIA GPU，在 Apple 芯片的 Mac 上用不了 GPU（不支持 Metal/MPS）。
@@ -202,6 +202,7 @@ size; readable from a grayscale printout; at least 300 dpi for color and graysca
 | Telling lines apart | color and line style change together: black solid, blue dashed, red dash-dot, wine dotted, olive solid, pink dashed, … |
 | Colors | black, then `#0072B2 #CC3311 #882255 #999933 #CC79A7`: checked for color-vision deficiency (worst pair ΔE 9.6, OKLab ×100) and ≥ 3:1 contrast on white. Colors that look alike in grayscale (blue/red, olive/pink) never share a line style |
 | PNG export | 300 dpi; figures wider than about 8 in get less, to keep the PNG under about 2400 px |
+| Theme | light, also while macOS is in dark mode (MATLAB R2025a+ would give new figures its dark theme, on which the black text disappears). It is the session-only value of MATLAB's figure-theme setting, so nothing is saved; `ccmcp.style('matlab')` hands the theme back to the system |
 
 - `ccmcp.style('matlab')` switches the session to MATLAB's defaults and `ccmcp.style('ieee')` back. The
   choice holds for the session, also when later Claude sessions reconnect. Set
