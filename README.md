@@ -159,6 +159,17 @@ Without the engine the Colab tools work as before and the MATLAB tools say how t
 | `matlab_status` | Session, mode, current run, working folder, open figures and `whos` |
 | `matlab_stop` | Quit the session (the workspace is lost) |
 
+### Optional `matlab` skill
+
+The server tells Claude to load a Claude Code skill named `matlab`, if one is available, before
+MATLAB or Simulink work. That skill bundles MathWorks' MATLAB Agentic Toolkit and Simulink Agentic
+Toolkit guidance (PDE Toolbox, parallel computing, Simulink and Simscape modeling, testing, code
+review, documentation lookup matched to your release, and the other toolboxes) and adapts it to
+these tools: for example `matlab_eval` instead of MathWorks' `evaluate_matlab_code`, and leaving the
+shared base workspace intact. It is installed separately as a user skill in `~/.claude/skills/matlab/`
+and is not shipped in this repository, since it contains MathWorks content. The server only
+recommends it; without it the MATLAB tools work the same.
+
 ### Output page
 
 `http://localhost:47822/matlab` shows the MATLAB runs like a notebook, newest last: each run's code

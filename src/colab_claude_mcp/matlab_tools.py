@@ -61,24 +61,14 @@ matlabengine versions: R2026b = 26.2, R2026a = 26.1, R2025b = 25.2, R2025a = 25.
 INSTRUCTIONS = f"""
 MATLAB (local): matlab_eval runs MATLAB code in a MATLAB session on this computer, with all
 installed toolboxes (for finite element work, the PDE Toolbox: createpde / femodel, geometry,
-generateMesh, solve, pdeplot). The session stays open across Claude sessions, so variables
-survive between calls; matlab_connect starts it (headless by default, desktop=true opens the
-MATLAB desktop so the user can watch). Variables already in the base workspace belong to earlier
-work: do not reuse their names for scratch values (put checks and tests in a function, or a script
-with local functions). Figures made by a run are returned as images and saved
-as PNG. Runs longer than wait_seconds keep going; use matlab_wait or matlab_interrupt. For long
-code, write a .m file and pass it as script. matlab_status shows the session and workspace.
-New figures in the session use an IEEE Transactions style: one column (3.5 in) wide, Times New
-Roman 9 pt with 10 pt axis labels, lines told apart by line style as well as color. So do not set
-fonts, font sizes, line widths or colors unless the user asks for them. Label axes with units
-(xlabel('V_{{DS}} (V)')) and add a legend for two or more lines. Two-column figure:
-figure('Units','inches','Position',[1 1 7.16 3]). pdeplot applies its own 'cool' colormap, which
-prints as flat gray: pass 'ColorMap','parula'. ccmcp.style('matlab') restores MATLAB's defaults.
-For figures meant for a paper, pass pdf=true: each figure is also saved as a vector PDF with
-embedded fonts. To put one in the user's project, copy it there under a descriptive name.
-Every run, with its code, printed output, errors and figures, appears on the MATLAB output page
-at {config.matlab_url()}. Open it in the built-in browser so the user can follow the runs there,
-especially when MATLAB runs headless.
+generateMesh, solve, pdeplot). If a `matlab` skill is available, load it before MATLAB or Simulink
+work: it holds MathWorks' guidance for every toolbox and for Simulink, adapted to these tools. The
+session stays open across Claude sessions, so variables survive between calls. Variables already
+in the base workspace belong to earlier work: do not reuse their names for scratch values (put
+checks and tests in a function, or a script with local functions). Follow the figure style given
+in matlab_eval's description. Every run, with its code, printed output, errors and figures,
+appears on the MATLAB output page at {config.matlab_url()}. Open it in the built-in browser so the
+user can follow the runs there, especially when MATLAB runs headless.
 """
 
 
@@ -91,18 +81,15 @@ parfor, parfeval, parpool or gpuArray, unless the user asks for them.
 """
     return """
 MATLAB parallel and GPU computing (COLAB_CLAUDE_ACCEL=auto): use it when the task allows, without
-being asked. matlab_connect and ccmcp.compute report the cores, the Parallel Computing Toolbox, the
-open pool and the GPU. Built-in functions already multithread on all cores, so vectorize first.
-When a run has independent pieces (parameter sweeps, Monte Carlo, many PDE solves or meshes) and
-would take more than about a minute serially, run them with parfor or parfeval on the pool from
-ccmcp.pool. ccmcp.pool reuses the open process pool or starts one (15-20 s to start, all cores,
-closes after 30 idle minutes, reused by later runs); ccmcp.pool('threads') starts in about a second,
-but many toolbox functions, PDE Toolbox geometry and meshing included, refuse thread workers.
+being asked. Built-in functions already multithread on all cores, so vectorize first. When a run
+has independent pieces (parameter sweeps, Monte Carlo, many PDE solves or meshes) and would take
+more than about a minute serially, run them with parfor or parfeval on the pool from ccmcp.pool
+(see matlab_eval). Do not use parallel pools for short runs: starting one costs more than it saves.
 Keep results reproducible: seed inside the loop (rng(k)) rather than relying on one stream, and
 check the parallel result against a serial run of a small case. Use gpuArray only when
-ccmcp.compute reports a GPU: MATLAB computes on NVIDIA GPUs only, so an Apple-silicon Mac has none
-(no Metal/MPS support in MATLAB). Do not use parallel pools for short runs: starting one costs more
-than it saves. In your reply, say what ran in parallel (pool type and workers) or on the GPU.
+matlab_connect or ccmcp.compute reports a GPU: MATLAB computes on NVIDIA GPUs only, so an
+Apple-silicon Mac has none (no Metal/MPS support in MATLAB). In your reply, say what ran in
+parallel (pool type and workers) or on the GPU.
 """
 
 
@@ -512,7 +499,9 @@ def register(mcp: FastMCP, viewer: Callable[[], Awaitable[bool]] | None = None) 
         wait_seconds: Annotated[float, Field(description="How long to wait for MATLAB to start.", ge=10, le=600)] = 180,
     ) -> ToolResult:
         """Start or connect to the local MATLAB session (it stays open across Claude sessions). Reports release,
-        working folder, whether the PDE Toolbox is available, and the cores, parallel pool and GPU it can use."""
+        working folder, whether the PDE Toolbox is available, and the cores, the Parallel Computing Toolbox, the
+        open pool and the GPU it can use (ccmcp.compute prints the same). If a `matlab` skill is available, load it
+        before MATLAB or Simulink work."""
         try:
             engine, notes = await _connect(desktop, restart, session, wait_seconds)
             info = io.StringIO()
@@ -566,11 +555,18 @@ def register(mcp: FastMCP, viewer: Callable[[], Awaitable[bool]] | None = None) 
         script: Annotated[
             str | None,
             Field(
-                description="Path of a .m script to run instead of code (run() semantics; may define local functions)."
+                description="Path of a .m script to run instead of code (run() semantics; may define local functions). "
+                "For long code, write a .m file and pass it here."
             ),
         ] = None,
         wait_seconds: Annotated[
-            float, Field(description="How long to wait before returning early; the run keeps going.", ge=0, le=600)
+            float,
+            Field(
+                description="How long to wait before returning early; the run keeps going (then use matlab_wait or "
+                "matlab_interrupt).",
+                ge=0,
+                le=600,
+            ),
         ] = 120,
         figures: Annotated[
             Literal["new", "all", "none"],
@@ -598,7 +594,20 @@ def register(mcp: FastMCP, viewer: Callable[[], Awaitable[bool]] | None = None) 
         ] = False,
     ) -> ToolResult:
         """Run MATLAB code or a .m script in the shared local MATLAB session. Returns the printed output and
-        attaches the figures it made as images. Starts MATLAB (headless) if it is not running."""
+        attaches the figures it made as images (also saved as PNG). Starts MATLAB (headless) if it is not running.
+        If a `matlab` skill is available, load it before MATLAB or Simulink work.
+
+        Figure style: new figures in the session use an IEEE Transactions style: one column (3.5 in) wide, Times
+        New Roman 9 pt with 10 pt axis labels, lines told apart by line style as well as color. So do not set fonts,
+        font sizes, line widths or colors unless the user asks for them. Label axes with units
+        (xlabel('V_{DS} (V)')) and add a legend for two or more lines. Two-column figure:
+        figure('Units','inches','Position',[1 1 7.16 3]). pdeplot applies its own 'cool' colormap, which prints as
+        flat gray: pass 'ColorMap','parula'. ccmcp.style('matlab') restores MATLAB's defaults. For figures meant
+        for a paper, pass pdf=true. To put a figure in the user's project, copy it there under a descriptive name.
+
+        Parallel pool: ccmcp.pool reuses the open process pool or starts one (15-20 s to start, all cores, closes
+        after 30 idle minutes, reused by later runs); ccmcp.pool('threads') starts in about a second, but many
+        toolbox functions, PDE Toolbox geometry and meshing included, refuse thread workers."""
         global _job, _engine
         if bool(code) == bool(script):
             return _error("Pass exactly one of code or script.")

@@ -63,10 +63,10 @@ Colab accelerators (COLAB_CLAUDE_ACCEL=auto): when the task allows, use them wit
 Before heavy numeric work, check what the runtime has (torch.cuda.is_available(), jax.devices(),
 or !nvidia-smi) and put the work on its GPU or TPU, with a CPU fallback in the code. For
 CPU-bound work with independent pieces, use vectorized NumPy or a process pool
-(concurrent.futures, joblib) over os.cpu_count() workers. The runtime type is the user's choice:
-when a task would clearly gain from a GPU or TPU and the runtime has none, say so instead of
-waiting through a slow CPU run. Colab runs on Google's machines, so Apple MPS is not available
-there. In your reply, say which device the work ran on.
+(concurrent.futures, joblib) over os.cpu_count() workers. When a task would clearly gain from a
+GPU or TPU and the runtime has none, say so instead of waiting through a slow CPU run. Colab runs
+on Google's machines, so Apple MPS is not available there. In your reply, say which device the
+work ran on.
 """
     )
     + matlab_tools.INSTRUCTIONS

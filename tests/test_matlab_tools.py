@@ -1,3 +1,10 @@
+import json
+import os
+import subprocess
+import sys
+
+import pytest
+
 from colab_claude_mcp import matlab_tools
 
 
@@ -82,3 +89,17 @@ def test_accel_instructions_follow_the_setting():
     off = matlab_tools.accel_instructions("off")
     assert "ccmcp.pool" in auto and "NVIDIA GPUs only" in auto
     assert "off" in off and "unless the user asks" in off and "ccmcp.pool" not in off
+
+
+@pytest.mark.parametrize("accel", ["auto", "off"])
+def test_server_instructions_fit_claude_code(accel):
+    # Claude Code cuts MCP server instructions after 4096 characters. They are built when the server
+    # module is imported, from COLAB_CLAUDE_ACCEL, so each setting is measured in a fresh interpreter.
+    env = {**os.environ, "COLAB_CLAUDE_ACCEL": accel}
+    env.pop("COLAB_CLAUDE_HTTP_PORT", None)  # the default port has five digits, the most a port can have
+    code = "import json; from colab_claude_mcp import server; print(json.dumps(server.INSTRUCTIONS))"
+    result = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, check=True)
+    instructions = json.loads(result.stdout.splitlines()[-1])
+    assert f"COLAB_CLAUDE_ACCEL={accel}" in instructions
+    assert len(instructions) <= 4096
+    assert "`matlab` skill" in instructions
