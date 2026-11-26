@@ -64,3 +64,21 @@ def test_pdf_size_reads_the_media_box(tmp_path):
     pdf.write_bytes(b"%PDF-1.5\nno readable box")
     assert matlab_tools._pdf_size(pdf) == ""
     assert matlab_tools._pdf_size(tmp_path / "missing.pdf") == ""
+
+
+def test_accel_setting(monkeypatch):
+    from colab_claude_mcp import config
+
+    monkeypatch.delenv("COLAB_CLAUDE_ACCEL", raising=False)
+    assert config.accel() == "auto"
+    monkeypatch.setenv("COLAB_CLAUDE_ACCEL", " Off ")
+    assert config.accel() == "off"
+    monkeypatch.setenv("COLAB_CLAUDE_ACCEL", "gpu")  # unknown: keep the default
+    assert config.accel() == "auto"
+
+
+def test_accel_instructions_follow_the_setting():
+    auto = matlab_tools.accel_instructions("auto")
+    off = matlab_tools.accel_instructions("off")
+    assert "ccmcp.pool" in auto and "NVIDIA GPUs only" in auto
+    assert "off" in off and "unless the user asks" in off and "ccmcp.pool" not in off

@@ -126,6 +126,9 @@ toolboxes, for example finite element models with the PDE Toolbox.
 `http://localhost:47822/matlab` 上，在 Claude 内置浏览器里打开它，MATLAB 静默运行时它就是输出窗口。
 新图默认使用 IEEE Transactions 风格：单栏 3.5 in，Times New Roman 9 pt（坐标轴标签 10 pt），线型与颜色同时区分，
 灰度打印也能分清；`ccmcp.style('matlab')` 可恢复 MATLAB 默认风格。投稿用图可加 `pdf=true`，同时导出嵌入字体的矢量 PDF。
+默认 `COLAB_CLAUDE_ACCEL=auto`：任务允许时，Claude 会主动用并行池（`ccmcp.pool`，默认进程池，用满全部核心）或 GPU 计算，
+Colab 里则用运行时自带的 GPU/TPU，并在回复里说明用了什么；设为 `off` 则一律串行、只用 CPU，除非你明确要求。
+MATLAB 只支持 NVIDIA GPU，在 Apple 芯片的 Mac 上用不了 GPU（不支持 Metal/MPS）。
 
 ### Install
 
@@ -204,6 +207,32 @@ size; readable from a grayscale printout; at least 300 dpi for color and graysca
 - In desktop mode, figures open as separate windows at their true size instead of docked tabs.
 - A MATLAB desktop you shared yourself is not restyled; run `ccmcp.style('ieee')` in it for the style.
 
+### Parallel and GPU computing
+
+With `COLAB_CLAUDE_ACCEL=auto` (the default) the server tells Claude to use parallel and accelerated
+computing when the task allows, without being asked, and to say in its reply what ran in parallel
+or on which device. `COLAB_CLAUDE_ACCEL=off` keeps runs serial and on the CPU unless you ask.
+
+MATLAB:
+
+- `matlab_connect` and `matlab_status` report the cores, the Parallel Computing Toolbox, the open
+  pool and the GPU; `ccmcp.compute` prints the same, `info = ccmcp.compute` returns it as a struct.
+- `ccmcp.pool` reuses the open process pool or starts one (all cores; 15–20 s to start; it closes
+  after 30 idle minutes, and later runs and Claude sessions reuse it). `ccmcp.pool('processes', n)`
+  sets the size, `ccmcp.pool('threads')` starts a thread pool in about a second, and
+  `ccmcp.pool('off')` shuts the pool down. Thread workers refuse many toolbox functions, PDE Toolbox
+  geometry and meshing among them, so the default is a process pool.
+- Claude vectorizes first (built-in functions already multithread on all cores) and uses `parfor` /
+  `parfeval` for independent pieces (sweeps, Monte Carlo, many PDE solves) that would take more than
+  about a minute serially. It seeds inside the loop and checks a small case against a serial run.
+- `gpuArray` is used only when `ccmcp.compute` reports a GPU. MATLAB computes on NVIDIA GPUs only,
+  so on an Apple-silicon Mac there is none: MATLAB has no Metal / MPS support.
+
+Colab: Claude checks the runtime (`torch.cuda.is_available()`, `jax.devices()`, `!nvidia-smi`)
+before heavy numeric work and puts it on the GPU or TPU, with a CPU fallback. The runtime type stays
+your choice in the Colab tab; when a task would clearly gain from a GPU and the runtime has none,
+Claude says so. Apple MPS does not apply there either, since Colab runs on Google's machines.
+
 ### How it works
 
 MATLAB started with `-batch` cannot be found by the engine, and with `-nodesktop` it exits when its
@@ -242,6 +271,7 @@ To let Claude work in a MATLAB desktop you opened yourself, run
 | `COLAB_CLAUDE_MATLAB_SESSION` | `colab_claude_mcp` | Name of the shared MATLAB session |
 | `COLAB_CLAUDE_MATLAB_OPTIONS` | none | Extra MATLAB startup options, such as `-sd /path/to/project` |
 | `COLAB_CLAUDE_MATLAB_STYLE` | `ieee` | Look of new figures: `ieee` (IEEE Transactions) or `matlab` (MATLAB's defaults) |
+| `COLAB_CLAUDE_ACCEL` | `auto` | `auto`: Claude uses a MATLAB parallel pool, a GPU or a Colab GPU/TPU when the task allows; `off`: serial and on the CPU unless you ask |
 
 Run code, logs (`.m`, `.log`) and figures (`.png`) are kept in `~/.colab-claude-mcp/matlab/runs/`;
 the host logs to `~/.colab-claude-mcp/matlab/host.log`.

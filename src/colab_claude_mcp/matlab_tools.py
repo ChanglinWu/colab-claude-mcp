@@ -63,7 +63,9 @@ MATLAB (local): matlab_eval runs MATLAB code in a MATLAB session on this compute
 installed toolboxes (for finite element work, the PDE Toolbox: createpde / femodel, geometry,
 generateMesh, solve, pdeplot). The session stays open across Claude sessions, so variables
 survive between calls; matlab_connect starts it (headless by default, desktop=true opens the
-MATLAB desktop so the user can watch). Figures made by a run are returned as images and saved
+MATLAB desktop so the user can watch). Variables already in the base workspace belong to earlier
+work: do not reuse their names for scratch values (put checks and tests in a function, or a script
+with local functions). Figures made by a run are returned as images and saved
 as PNG. Runs longer than wait_seconds keep going; use matlab_wait or matlab_interrupt. For long
 code, write a .m file and pass it as script. matlab_status shows the session and workspace.
 New figures in the session use an IEEE Transactions style: one column (3.5 in) wide, Times New
@@ -78,6 +80,31 @@ Every run, with its code, printed output, errors and figures, appears on the MAT
 at {config.matlab_url()}. Open it in the built-in browser so the user can follow the runs there,
 especially when MATLAB runs headless.
 """
+
+
+def accel_instructions(mode: str | None = None) -> str:
+    """What the instructions say about parallel and GPU computing in MATLAB (COLAB_CLAUDE_ACCEL)."""
+    if (mode or config.accel()) == "off":
+        return """
+MATLAB parallel and GPU computing is off (COLAB_CLAUDE_ACCEL=off): run loops serially, without
+parfor, parfeval, parpool or gpuArray, unless the user asks for them.
+"""
+    return """
+MATLAB parallel and GPU computing (COLAB_CLAUDE_ACCEL=auto): use it when the task allows, without
+being asked. matlab_connect and ccmcp.compute report the cores, the Parallel Computing Toolbox, the
+open pool and the GPU. Built-in functions already multithread on all cores, so vectorize first.
+When a run has independent pieces (parameter sweeps, Monte Carlo, many PDE solves or meshes) and
+would take more than about a minute serially, run them with parfor or parfeval on the pool from
+ccmcp.pool. ccmcp.pool reuses the open process pool or starts one (15-20 s to start, all cores,
+closes after 30 idle minutes, reused by later runs); ccmcp.pool('threads') starts in about a second,
+but many toolbox functions, PDE Toolbox geometry and meshing included, refuse thread workers.
+Keep results reproducible: seed inside the loop (rng(k)) rather than relying on one stream, and
+check the parallel result against a serial run of a small case. Use gpuArray only when
+ccmcp.compute reports a GPU: MATLAB computes on NVIDIA GPUs only, so an Apple-silicon Mac has none
+(no Metal/MPS support in MATLAB). Do not use parallel pools for short runs: starting one costs more
+than it saves. In your reply, say what ran in parallel (pool type and workers) or on the GPU.
+"""
+
 
 MAX_IMAGES = 6
 MAX_TEXT = 16_000
@@ -485,14 +512,14 @@ def register(mcp: FastMCP, viewer: Callable[[], Awaitable[bool]] | None = None) 
         wait_seconds: Annotated[float, Field(description="How long to wait for MATLAB to start.", ge=10, le=600)] = 180,
     ) -> ToolResult:
         """Start or connect to the local MATLAB session (it stays open across Claude sessions). Reports release,
-        working folder and whether the PDE Toolbox is available."""
+        working folder, whether the PDE Toolbox is available, and the cores, parallel pool and GPU it can use."""
         try:
             engine, notes = await _connect(desktop, restart, session, wait_seconds)
             info = io.StringIO()
             await asyncio.to_thread(
                 engine.eval,
                 "fprintf('%s\\n%s\\n%d\\n%s\\n', version, pwd, license('test','PDE_Toolbox') && ~isempty(ver('pde')), "
-                "char(string(getappdata(groot, 'ccmcp_style'))));",
+                "char(string(getappdata(groot, 'ccmcp_style')))); ccmcp.compute();",
                 nargout=0,
                 stdout=info,
                 stderr=io.StringIO(),
@@ -501,7 +528,9 @@ def register(mcp: FastMCP, viewer: Callable[[], Awaitable[bool]] | None = None) 
             return _error(str(error))
         except Exception as error:  # noqa: BLE001
             return _error(f"{type(error).__name__}: {error}")
-        release, cwd, pde, style = (info.getvalue().splitlines() + ["", "", "", ""])[:4]
+        printed = info.getvalue().splitlines()
+        release, cwd, pde, style = (printed + ["", "", "", ""])[:4]
+        compute = [line for line in printed[4:] if line.strip()]
         state = matlab_host.read_state()
         mode = (
             state.get("mode", "shared by the user") if _engine_name == config.matlab_session() else "shared by the user"
@@ -515,6 +544,10 @@ def register(mcp: FastMCP, viewer: Callable[[], Awaitable[bool]] | None = None) 
             "ccmcp.style('matlab') restores MATLAB's defaults"
             if style.strip() == "ieee"
             else "Plot style: MATLAB's defaults; ccmcp.style('ieee') switches to the IEEE Transactions style",
+            *compute,
+            "Parallel/GPU use: off (COLAB_CLAUDE_ACCEL=off)"
+            if config.accel() == "off"
+            else "Parallel/GPU use: when the task allows (ccmcp.pool; COLAB_CLAUDE_ACCEL=off turns it off)",
             f"Run logs and figures: {config.matlab_home() / 'runs'}",
             f"Output page (open it in the built-in browser to follow the runs): {url}"
             if url
@@ -700,7 +733,7 @@ def register(mcp: FastMCP, viewer: Callable[[], Awaitable[bool]] | None = None) 
                 engine, _ = await _engine_for_use()
                 out = io.StringIO()
                 future = engine.eval(
-                    "fprintf('Working folder: %s\\nOpen figures: %d\\n', pwd, numel(findall(groot,'Type','figure'))); whos",
+                    "fprintf('Working folder: %s\\nOpen figures: %d\\n', pwd, numel(findall(groot,'Type','figure'))); ccmcp.compute(); whos",
                     nargout=0,
                     background=True,
                     stdout=out,

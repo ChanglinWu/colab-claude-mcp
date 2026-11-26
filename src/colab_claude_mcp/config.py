@@ -20,7 +20,7 @@ import os
 from pathlib import Path
 import secrets
 
-VERSION = "0.4.1"
+VERSION = "0.5.0"
 
 # Version of the HTTP API between the stdio server and the hub. A hub with a tab connected is
 # replaced only when this differs, so ordinary upgrades do not drop the tab.
@@ -65,6 +65,16 @@ def matlab_url() -> str:
 def browser() -> str | None:
     """Browser used to open Colab tabs: COLAB_CLAUDE_BROWSER, else BROWSER, else the OS default."""
     return os.environ.get("COLAB_CLAUDE_BROWSER") or os.environ.get("BROWSER") or None
+
+
+def accel() -> str:
+    """Parallel and accelerated computing: "auto" (the default) or "off".
+
+    "auto": Claude uses a MATLAB parallel pool, a GPU or a Colab GPU/TPU when the task allows.
+    "off": runs stay serial and on the CPU unless the user asks otherwise.
+    """
+    value = os.environ.get("COLAB_CLAUDE_ACCEL", "auto").strip().lower()
+    return value if value in ("auto", "off") else "auto"
 
 
 def load_token() -> str:

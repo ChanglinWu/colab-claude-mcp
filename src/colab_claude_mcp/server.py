@@ -52,7 +52,25 @@ A live copy of the notebook is served at {config.mirror_url()} (the mirror page)
 it in the built-in browser so the user can watch cells, run status and outputs there.
 Choosing a GPU or other runtime type is done by the user in the Colab tab.
 """
+    + (
+        """
+Colab accelerators are off (COLAB_CLAUDE_ACCEL=off): keep the work on the CPU, without moving it
+to a GPU or TPU, unless the user asks for it.
+"""
+        if config.accel() == "off"
+        else """
+Colab accelerators (COLAB_CLAUDE_ACCEL=auto): when the task allows, use them without being asked.
+Before heavy numeric work, check what the runtime has (torch.cuda.is_available(), jax.devices(),
+or !nvidia-smi) and put the work on its GPU or TPU, with a CPU fallback in the code. For
+CPU-bound work with independent pieces, use vectorized NumPy or a process pool
+(concurrent.futures, joblib) over os.cpu_count() workers. The runtime type is the user's choice:
+when a task would clearly gain from a GPU or TPU and the runtime has none, say so instead of
+waiting through a slow CPU run. Colab runs on Google's machines, so Apple MPS is not available
+there. In your reply, say which device the work ran on.
+"""
+    )
     + matlab_tools.INSTRUCTIONS
+    + matlab_tools.accel_instructions()
 )
 
 mcp = FastMCP(name="colab-claude-mcp", instructions=INSTRUCTIONS)
