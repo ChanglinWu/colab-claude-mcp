@@ -80,11 +80,14 @@
   main { max-width: 980px; margin: 0 auto; padding: 14px 16px 40px; }
   section.cell { scroll-margin-top: 100px; }
   .empty { color: var(--muted); padding: 40px 0; text-align: center; }
-  .cell { display: grid; grid-template-columns: 48px minmax(0, 1fr); gap: 8px; margin-bottom: 12px; }
-  .gutter { font: 12px var(--mono); color: var(--muted); padding-top: 9px; display: flex; flex-direction: column;
-    align-items: flex-end; gap: 4px; }
-  .text .gutter { opacity: .6; }
-  /* Run / Err / Warn / Out / Done, like IPython's short In / Out prompts; the run time below it. */
+  .cell { margin-bottom: 12px; }
+  /* No side column: the cell number, its tag and run time sit in the top right corner of the cell, so the
+     content gets the full width. Markdown cells show their number only on hover. */
+  .badge { float: right; position: relative; z-index: 1; display: flex; align-items: center; gap: 5px;
+    margin: 6px 7px 0 12px; font: 11px/16px var(--mono); color: var(--muted); }
+  .text .badge { float: none; position: absolute; top: 3px; right: 6px; margin: 0; opacity: 0; }
+  .text:hover .badge, .text.show-source .badge { opacity: .8; }
+  /* Run / Err / Warn / Out / Done, like IPython's short In / Out prompts. */
   .tag { font: 600 10.5px/16px var(--sans); padding: 0 5px; border-radius: 4px; white-space: nowrap; cursor: default;
     background: color-mix(in srgb, currentColor 13%, transparent); }
   .tag:empty, .time:empty { display: none; }
@@ -93,7 +96,7 @@
   .t-run::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 4px; border-radius: 50%;
     background: currentColor; vertical-align: 1px; }
   .time { font: 10.5px/1 var(--sans); font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .body { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .body { position: relative; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
   .text .body { background: transparent; border-color: transparent; }
   .text:hover .body, .text.show-source .body { border-color: var(--line); }
   .running .body { border-color: var(--run); box-shadow: 0 0 0 1px var(--run); }
@@ -151,8 +154,7 @@
   details.activity summary { cursor: pointer; padding: 6px 0; }
   #log { font: 12px/1.6 var(--mono); margin: 0; padding: 0; list-style: none; }
   #log time { margin-right: 8px; }
-  @media (max-width: 560px) { .cell { grid-template-columns: 1fr; gap: 2px; }
-    .gutter { flex-direction: row; align-items: center; gap: 6px; padding-top: 0; } }
+  @media (max-width: 720px) { .row { padding-left: 12px; padding-right: 12px; } main { padding: 12px 12px 40px; } .md { padding: 6px 10px; } }
   @media (prefers-reduced-motion: no-preference) {
     .t-run::before, .k-busy .dot { animation: pulse 1.1s ease-in-out infinite; }
     @keyframes pulse { 50% { opacity: .25; } }
@@ -213,7 +215,7 @@ function fmt(seconds) {
   return Math.floor(seconds / 60) + " min " + Math.round(seconds % 60) + " s";
 }
 
-function short(seconds) { // for the narrow gutter: 5.6s, 42s, 12m05s, 1h02m
+function short(seconds) { // for the badge: 5.6s, 42s, 12m05s, 1h02m
   if (seconds < 10) return seconds.toFixed(1) + "s";
   if (seconds < 60) return Math.floor(seconds) + "s";
   const pad = (n) => String(Math.floor(n)).padStart(2, "0");
@@ -428,8 +430,8 @@ function showMarkdown(box, source, cellId) {
 function makeCell(cell) {
   const el = document.createElement("section");
   el.dataset.id = cell.id;
-  el.innerHTML = '<div class="gutter"><span class="idx"></span><span class="tag"></span><span class="time"></span></div>' +
-    '<div class="body"><div class="md"></div><pre class="source"></pre><div class="outputs"></div></div>';
+  el.innerHTML = '<div class="body"><div class="badge"><span class="idx"></span><span class="tag"></span>' +
+    '<span class="time"></span></div><div class="md"></div><pre class="source"></pre><div class="outputs"></div></div>';
   const entry = {el, cell: cell, source: null, type: null, rev: -1, status: null, tag: null, showSource: false};
   el.addEventListener("dblclick", () => { // double-click a Markdown cell to see its source
     if (entry.type === "code") return;
@@ -579,7 +581,7 @@ function render(state) {
         else showMarkdown(box, cell.source || "", cell.id);
         entry.source = cell.source;
         entry.type = cell.type;
-        entry.el.querySelector(".gutter").title = cell.type === "code" ? "" : "Double-click the cell to show or hide its Markdown source";
+        entry.el.querySelector(".badge").title = cell.type === "code" ? "" : "Double-click the cell to show or hide its Markdown source";
       }
       if (entry.status !== cell.status && cell.status === "running" && ui.follow.checked) {
         entry.el.scrollIntoView({block: "center", behavior: "smooth"});

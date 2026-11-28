@@ -140,6 +140,7 @@ def runs_state(matlab_dir: Path, limit: int = MAX_RUNS) -> dict:
             continue
         mtime, record = read
         record = _resolve(record, folder, session["running"])
+        output = record.get("output") or ""
         runs.append(
             {
                 "id": record.get("id"),
@@ -148,6 +149,10 @@ def runs_state(matlab_dir: Path, limit: int = MAX_RUNS) -> dict:
                 "started": record.get("started"),
                 "finished": record.get("finished"),
                 "rev": f"{mtime}:{record.get('status')}",
+                # for the page's Err / Warn / Out tags
+                "error": bool(record.get("error")),
+                "warn": bool((record.get("stderr") or "").strip()) or "Warning:" in output,
+                "out": bool(output.strip() or record.get("figures")),
             }
         )
     return {"now": time.time(), "session": session, "runs": runs}

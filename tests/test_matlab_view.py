@@ -29,6 +29,23 @@ def test_runs_state_lists_recent_runs_oldest_first(tmp_path):
     assert all("output" not in run for run in state["runs"])  # summaries stay small
 
 
+def test_runs_state_flags_errors_warnings_and_output_for_the_tags(tmp_path):
+    done = {"status": "finished", "finished": time.time()}
+    _record(tmp_path, "run_20261125_160801_aaaa", output="ans = 1\n", **done)
+    _record(tmp_path, "run_20261125_160802_bbbb", output="Warning: Matrix is singular.\n", **done)
+    _record(tmp_path, "run_20261125_160803_cccc", error="Undefined function 'f'.", status="failed")
+    _record(tmp_path, "run_20261125_160804_dddd", figures=["run_20261125_160804_dddd_fig1.png"], **done)
+    _record(tmp_path, "run_20261125_160805_eeee", output="\n", **done)
+    flags = [(run["error"], run["warn"], run["out"]) for run in matlab_view.runs_state(tmp_path)["runs"]]
+    assert flags == [
+        (False, False, True),
+        (False, True, True),
+        (True, False, False),
+        (False, False, True),  # a figure is output too
+        (False, False, False),
+    ]
+
+
 def test_a_run_the_starting_session_left_behind_is_completed_from_its_log(tmp_path):
     runs = _record(tmp_path)
     (runs / f"{RUN}.log").write_text("step 1\nstep 2\n")

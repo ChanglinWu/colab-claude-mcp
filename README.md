@@ -116,9 +116,11 @@ uvx --from git+https://github.com/ChanglinWu/colab-claude-mcp colab-claude-mcp s
 - The tab uses whichever Google account that browser opens Colab with.
 - The mirror page is read-only and shows what the hub knows: cells and outputs as of the last sync
   (every 2 s while a cell runs or the page is open).
-- Next to each code cell, a short tag in the style of IPython's `In`/`Out` prompts and the run time:
-  **Run** (running), **Err** (error), **Warn** (warnings on stderr; progress bars do not count), **Out**
-  (has output) or **Done** (finished, no output). Hover over the tag for the details.
+- There is no side column, so the cells get the full width. In each code cell's top right corner: its
+  number, a short tag in the style of IPython's `In`/`Out` prompts and the run time. The tags are **Run**
+  (running), **Err** (error), **Warn** (warnings on stderr; progress bars do not count), **Out** (has
+  output) and **Done** (finished, no output); hover over one for the details. Markdown cells show their
+  number on hover.
 - Markdown cells are rendered as in JupyterLab: tables, images, HTML and LaTeX math (`$…$`, `$$…$$`,
   `\begin{align}…`, typeset with KaTeX; `\newcommand` carries over to later cells). Double-click a Markdown
   cell to see its source. Markdown and LaTeX outputs, such as `display(Markdown(…))` or SymPy results, are
@@ -255,7 +257,8 @@ recommends it; without it the MATLAB tools work the same.
 ### Output page
 
 `http://localhost:47822/matlab` shows the MATLAB runs like a notebook, newest last: each run's code
-(or script), printed output, warnings, errors and figures, with its status and run time. Ask Claude to
+(or script), printed output, warnings, errors and figures. Its top right corner shows the start time, the
+same tags as the notebook mirrors (plus **Stop** for an interrupted run) and the run time. Ask Claude to
 open it in the built-in browser; with MATLAB headless, it is the output window. It follows the newest
 run unless you switch off *Follow*. The switcher at the top of each page (Colab, Jupyter, MATLAB) moves
 between the three pages.
