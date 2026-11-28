@@ -74,6 +74,7 @@
   <span id="conn" class="pill off"><span class="dot"></span><span id="conn-text">Connecting…</span></span>
   <span id="meta" class="meta"></span>
   <label class="follow"><input id="follow" type="checkbox" checked> Follow running cell</label>
+  <a class="nav" id="other" href="/jupyter/">Jupyter mirror</a>
   <a class="nav" href="/matlab">MATLAB output</a>
 </header>
 <main id="cells"><p class="empty">Waiting for the hub…</p></main>
@@ -83,6 +84,13 @@ const cellsEl = document.getElementById("cells");
 const known = new Map(); // id -> {el, source, rev, status, started, finished}
 let skew = 0, lastRev = -1, lastState = null;
 const LABELS = {idle: "", has_output: "has output", running: "running", done: "done", error: "error", failed: "failed"};
+// The same page mirrors the Colab notebook (at /) and the JupyterLab one (at /jupyter/).
+const KINDS = {
+  colab: {tab: "Colab tab", empty: "No notebook yet. Ask Claude to connect to Colab.",
+    other: ["/jupyter/", "Jupyter mirror"]},
+  jupyter: {tab: "JupyterLab tab", empty: "No notebook yet. Ask Claude to connect to JupyterLab.",
+    other: ["/", "Colab mirror"], setup: ["/jupyter/setup", "Connect a JupyterLab tab"]},
+};
 
 function fmt(seconds) {
   if (seconds < 60) return seconds.toFixed(seconds < 10 ? 1 : 0) + " s";
@@ -143,7 +151,7 @@ addEventListener("message", (event) => {
 async function loadOutputs(cell, entry) {
   const wanted = cell.rev;
   try {
-    const data = await (await fetch("/outputs/" + encodeURIComponent(cell.id), {cache: "no-store"})).json();
+    const data = await (await fetch("outputs/" + encodeURIComponent(cell.id), {cache: "no-store"})).json();
     const box = entry.el.querySelector(".outputs");
     box.replaceChildren(...data.items.map((item, n) => renderItem(item, cell.id, n)));
     entry.rev = data.rev;
@@ -155,18 +163,31 @@ async function loadOutputs(cell, entry) {
 function render(state) {
   lastState = state;
   skew = Date.now() / 1000 - state.now;
+  const kind = KINDS[state.kind] || KINDS.colab;
+  const other = document.getElementById("other");
+  if (other.getAttribute("href") !== kind.other[0]) {
+    other.href = kind.other[0];
+    other.textContent = kind.other[1];
+    if (kind.setup) {
+      const setup = document.createElement("a");
+      setup.className = "nav";
+      setup.href = kind.setup[0];
+      setup.textContent = kind.setup[1];
+      other.before(setup);
+    }
+  }
   const conn = document.getElementById("conn");
   conn.className = "pill " + (state.connected ? "on" : "off");
-  document.getElementById("conn-text").textContent = state.connected ? "Colab tab connected" : "No Colab tab connected";
+  document.getElementById("conn-text").textContent = state.connected ? kind.tab + " connected" : "No " + kind.tab + " connected";
   const running = state.cells.filter((c) => c.status === "running").length;
   document.getElementById("meta").textContent = [
-    state.notebook || "", state.cells.length + (state.cells.length === 1 ? " cell" : " cells"),
+    state.notebook || "", state.kernel || "", state.cells.length + (state.cells.length === 1 ? " cell" : " cells"),
     running ? running + " running" : ""].filter(Boolean).join(" · ");
 
   if (!state.cells.length) {
     known.clear();
-    cellsEl.innerHTML = '<p class="empty">' + (state.connected ? "The notebook has no cells." :
-      "No notebook yet. Ask Claude to connect to Colab.") + "</p>";
+    cellsEl.innerHTML = '<p class="empty">' + (state.connected && state.notebook ? "The notebook has no cells." :
+      kind.empty) + "</p>";
   } else {
     const ids = state.cells.map((c) => c.id);
     for (const id of [...known.keys()]) if (!ids.includes(id)) { known.get(id).el.remove(); known.delete(id); }
@@ -213,7 +234,7 @@ function updateTimers() {
 
 async function tick() {
   try {
-    render(await (await fetch("/state", {cache: "no-store"})).json());
+    render(await (await fetch("state", {cache: "no-store"})).json());
   } catch (e) {
     document.getElementById("conn").className = "pill off";
     document.getElementById("conn-text").textContent = "Hub not running";

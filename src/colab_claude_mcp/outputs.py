@@ -126,7 +126,7 @@ def _html_as_text(item: dict) -> str:
         detail = f", {frames} embedded images" if frames else ""
         plain = item.get("plain") or ""
         note = f" ({plain})" if plain and len(plain) < 200 else ""
-        return f"[HTML output, {size / 1024:,.0f} KB{detail}{note} — shown in the Colab tab and on the mirror page]"
+        return f"[HTML output, {size / 1024:,.0f} KB{detail}{note} — shown in the notebook and on the mirror page]"
     text = html_lib.unescape(TAGS.sub(" ", html))
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\s*\n\s*", "\n", text).strip()

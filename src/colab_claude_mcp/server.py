@@ -52,21 +52,28 @@ A live copy of the notebook is served at {config.mirror_url()} (the mirror page)
 it in the built-in browser so the user can watch cells, run status and outputs there.
 Choosing a GPU or other runtime type is done by the user in the Colab tab.
 """
+    + f"""
+JupyterLab (for example on the user's HPC, through an SSH tunnel): jupyter_connect opens a notebook
+there through the user's logged-in JupyterLab tab, which the user links with the "Claude ⇄ Jupyter"
+bookmark. Never ask for the Jupyter password. The cell tools then act on that notebook
+(backend="jupyter"); it is saved on the server after each change, and jupyter_kernel interrupts or
+restarts its kernel. Its mirror page is {config.jupyter_mirror_url()}.
+"""
     + (
         """
-Colab accelerators are off (COLAB_CLAUDE_ACCEL=off): keep the work on the CPU, without moving it
-to a GPU or TPU, unless the user asks for it.
+Colab and Jupyter accelerators are off (COLAB_CLAUDE_ACCEL=off): keep the work on the CPU, without
+moving it to a GPU or TPU, unless the user asks for it.
 """
         if config.accel() == "off"
         else """
-Colab accelerators (COLAB_CLAUDE_ACCEL=auto): when the task allows, use them without being asked.
-Before heavy numeric work, check what the runtime has (torch.cuda.is_available(), jax.devices(),
-or !nvidia-smi) and put the work on its GPU or TPU, with a CPU fallback in the code. For
-CPU-bound work with independent pieces, use vectorized NumPy or a process pool
-(concurrent.futures, joblib) over os.cpu_count() workers. When a task would clearly gain from a
-GPU or TPU and the runtime has none, say so instead of waiting through a slow CPU run. Colab runs
-on Google's machines, so Apple MPS is not available there. In your reply, say which device the
-work ran on.
+Colab and Jupyter accelerators (COLAB_CLAUDE_ACCEL=auto): when the task allows, use them without
+being asked. Before heavy numeric work, check what the runtime has (torch.cuda.is_available(),
+jax.devices(), or !nvidia-smi) and put the work on its GPU or TPU, with a CPU fallback in the code.
+For CPU-bound work with independent pieces, use vectorized NumPy or a process pool
+(concurrent.futures, joblib) over the cores you may use (len(os.sched_getaffinity(0)) on a shared
+HPC node). When a task would clearly gain from a GPU or TPU and the runtime has none, say so
+instead of waiting through a slow CPU run. Apple MPS is not available there. In your reply, say
+which device the work ran on.
 """
     )
     + matlab_tools.INSTRUCTIONS
@@ -84,8 +91,24 @@ CellIndex = Annotated[
     int | None,
     Field(description="Position to insert at (0 is the top). Omit to append at the end.", ge=0),
 ]
+Backend = Annotated[
+    Literal["colab", "jupyter"] | None,
+    Field(
+        description="Which notebook: 'colab', or 'jupyter' for the JupyterLab notebook of jupyter_connect "
+        "(for example on an HPC). Default: the one this session connected to last."
+    ),
+]
 
 _hub_lock = asyncio.Lock()
+
+# The notebook this session connected to last; the cell tools act on it unless told otherwise.
+_session: dict[str, str | None] = {"backend": None}
+
+OLD_HUB = (
+    "An older colab-claude-mcp hub without the JupyterLab backend is still running, because a Colab tab is "
+    "connected to it. The new hub takes over once that tab is closed, or after `colab-claude-mcp stop` "
+    "(which disconnects the Colab tab)."
+)
 
 
 async def _health(client: httpx.AsyncClient) -> dict | None:
@@ -167,6 +190,27 @@ async def hub_call(op: str, args: dict, timeout: float = 90) -> ToolResult:
     return ToolResult(content=content)
 
 
+async def jupyter_call(op: str, args: dict, timeout: float = 90) -> ToolResult:
+    """A JupyterLab operation. An older hub kept alive by its Colab tab does not know them."""
+    result = await hub_call(op, args, timeout)
+    first = result.content[0] if result.content else None
+    if isinstance(first, TextContent) and first.text.startswith("ERROR: Unknown operation: jupyter_"):
+        return ToolResult(content=[TextContent(type="text", text="ERROR: " + OLD_HUB)])
+    return result
+
+
+def backend_for(backend: str | None) -> str | None:
+    """The notebook a cell tool acts on: the one asked for, else this session's last; None lets the hub pick."""
+    return backend or _session["backend"]
+
+
+async def cell_call(op: str, args: dict, backend: str | None, timeout: float = 90) -> ToolResult:
+    chosen = backend_for(backend)
+    if chosen == "jupyter":
+        return await jupyter_call("jupyter_" + op, args, timeout)
+    return await hub_call(op, {**args, "backend": chosen} if chosen else args, timeout)
+
+
 @mcp.tool
 async def colab_connect(
     new_notebook: Annotated[
@@ -187,6 +231,7 @@ async def colab_connect(
     wait_seconds: Annotated[float, Field(description="How long to wait for the tab to connect.", ge=1, le=600)] = 60,
 ) -> ToolResult:
     """Connect to Colab. Reuses the already connected tab; opens a tab only if none is connected or one is asked for."""
+    _session["backend"] = "colab"
     args = {
         "new_notebook": new_notebook,
         "notebook_url": notebook_url,
@@ -210,9 +255,11 @@ async def get_cells(
     start: Annotated[int, Field(description="First cell index (inclusive).", ge=0)] = 0,
     end: Annotated[int | None, Field(description="Last cell index (inclusive). Omit for the last cell.", ge=0)] = None,
     include_outputs: Annotated[bool, Field(description="Include a text summary of each cell's output.")] = False,
+    backend: Backend = None,
 ) -> ToolResult:
     """Read the full source of the notebook's cells, optionally with their outputs."""
-    return await hub_call("get_cells", {"start": start, "end": end, "include_outputs": include_outputs}, timeout=150)
+    args = {"start": start, "end": end, "include_outputs": include_outputs}
+    return await cell_call("get_cells", args, backend, timeout=150)
 
 
 @mcp.tool
@@ -220,61 +267,126 @@ async def add_code_cell(
     code: Annotated[str, Field(description="The code for the new cell.")],
     cell_index: CellIndex = None,
     run: Annotated[bool, Field(description="Run the cell right after adding it.")] = False,
-    language: Literal["python", "r", "julia"] = "python",
+    language: Annotated[
+        Literal["python", "r", "julia"], Field(description="Colab only; in JupyterLab the notebook's kernel decides.")
+    ] = "python",
     wait_seconds: WaitSeconds = 120,
+    backend: Backend = None,
 ) -> ToolResult:
     """Add a code cell (appended by default) and optionally run it. Returns the new cell's ID and any output."""
     args = {"code": code, "cell_index": cell_index, "run": run, "language": language, "wait_seconds": wait_seconds}
-    return await hub_call("add_code_cell", args, timeout=wait_seconds + 90)
+    return await cell_call("add_code_cell", args, backend, timeout=wait_seconds + 90)
 
 
 @mcp.tool
 async def add_text_cell(
     content: Annotated[str, Field(description="Markdown (LaTeX allowed) for the new cell.")],
     cell_index: CellIndex = None,
+    backend: Backend = None,
 ) -> ToolResult:
     """Add a text (Markdown) cell, appended by default."""
-    return await hub_call("add_text_cell", {"content": content, "cell_index": cell_index})
+    return await cell_call("add_text_cell", {"content": content, "cell_index": cell_index}, backend)
 
 
 @mcp.tool
 async def update_cell(
     cell_id: CellId,
     content: Annotated[str, Field(description="The new content, replacing the old content entirely.")],
+    backend: Backend = None,
 ) -> ToolResult:
     """Replace the content of an existing cell."""
-    return await hub_call("update_cell", {"cell_id": cell_id, "content": content})
+    return await cell_call("update_cell", {"cell_id": cell_id, "content": content}, backend)
 
 
 @mcp.tool
-async def run_code_cell(cell_id: CellId, wait_seconds: WaitSeconds = 120) -> ToolResult:
+async def run_code_cell(cell_id: CellId, wait_seconds: WaitSeconds = 120, backend: Backend = None) -> ToolResult:
     """Run a code cell. Returns its text output and attaches plots as images; returns early if it runs long."""
-    return await hub_call(
-        "run_code_cell", {"cell_id": cell_id, "wait_seconds": wait_seconds}, timeout=wait_seconds + 60
-    )
+    args = {"cell_id": cell_id, "wait_seconds": wait_seconds}
+    return await cell_call("run_code_cell", args, backend, timeout=wait_seconds + 60)
 
 
 @mcp.tool
-async def wait_for_cell(cell_id: CellId, wait_seconds: WaitSeconds = 120) -> ToolResult:
+async def wait_for_cell(cell_id: CellId, wait_seconds: WaitSeconds = 120, backend: Backend = None) -> ToolResult:
     """Wait for a cell started with run_code_cell to finish, then return its output."""
-    return await hub_call(
-        "wait_for_cell", {"cell_id": cell_id, "wait_seconds": wait_seconds}, timeout=wait_seconds + 60
-    )
+    args = {"cell_id": cell_id, "wait_seconds": wait_seconds}
+    return await cell_call("wait_for_cell", args, backend, timeout=wait_seconds + 60)
 
 
 @mcp.tool
-async def delete_cell(cell_id: CellId) -> ToolResult:
+async def delete_cell(cell_id: CellId, backend: Backend = None) -> ToolResult:
     """Delete a cell."""
-    return await hub_call("delete_cell", {"cell_id": cell_id})
+    return await cell_call("delete_cell", {"cell_id": cell_id}, backend)
 
 
 @mcp.tool
 async def move_cell(
     cell_id: CellId,
     cell_index: Annotated[int, Field(description="The index to move the cell to.", ge=0)],
+    backend: Backend = None,
 ) -> ToolResult:
     """Move a cell to another position."""
-    return await hub_call("move_cell", {"cell_id": cell_id, "cell_index": cell_index})
+    return await cell_call("move_cell", {"cell_id": cell_id, "cell_index": cell_index}, backend)
+
+
+@mcp.tool
+async def jupyter_connect(
+    notebook_path: Annotated[
+        str | None,
+        Field(
+            description="Notebook on the Jupyter server, relative to the folder JupyterLab was started in, for "
+            "example 'claude/lenet_check.ipynb' (opened if it exists, created with its folders if not). Default: "
+            "the notebook already open, else claude/scratch.ipynb. Pick a name that says what the work is."
+        ),
+    ] = None,
+    kernel: Annotated[
+        str | None,
+        Field(
+            description="Kernel name, as listed in the reply (for example a conda environment's kernel). Default: "
+            "the notebook's own kernel, else the server's default."
+        ),
+    ] = None,
+    wait_seconds: Annotated[
+        float, Field(description="How long to wait for a JupyterLab tab to connect.", ge=0, le=600)
+    ] = 30,
+) -> ToolResult:
+    """Connect to JupyterLab (for example on the user's HPC) through the user's browser tab and open a notebook there.
+
+    The user logs in to JupyterLab in the browser as usual and clicks the 'Claude ⇄ Jupyter' bookmark in
+    that tab; the tab then relays the requests, so Claude never needs, and must never ask for, the
+    Jupyter password. If no tab is connected, the reply says what to ask the user. Afterwards the cell
+    tools (add_code_cell, run_code_cell, get_cells, ...) act on this notebook. Its kernel runs on the
+    server and keeps running between sessions. The notebook is saved on the server after every change, so
+    nothing needs saving at the end. The user watches on the Jupyter mirror page. If they also have the
+    notebook open in JupyterLab, that tab shows Claude's edits only after it reloads from disk: when
+    JupyterLab says the file changed on disk, they must choose Revert, not Overwrite. Long runs:
+    run_code_cell returns early, the cell keeps running, and wait_for_cell picks it up, also from a later
+    session. On a shared HPC node, use only the cores and GPUs given to the job.
+    """
+    _session["backend"] = "jupyter"
+    args = {"notebook_path": notebook_path, "kernel": kernel, "wait_seconds": wait_seconds}
+    return await jupyter_call("jupyter_connect", args, timeout=wait_seconds + 120)
+
+
+@mcp.tool
+async def jupyter_status(
+    include_outputs: Annotated[bool, Field(description="Also show a text summary of each cell's output.")] = False,
+) -> ToolResult:
+    """Show whether a JupyterLab tab is connected, the open notebook, its kernel and cells, and the mirror URL."""
+    return await jupyter_call("jupyter_status", {"include_outputs": include_outputs})
+
+
+@mcp.tool
+async def jupyter_kernel(
+    action: Annotated[
+        Literal["interrupt", "restart", "shutdown"],
+        Field(
+            description="interrupt: stop the running cell (KeyboardInterrupt). restart: clear all variables. "
+            "shutdown: stop the kernel and free its memory and GPU on the server; the notebook stays."
+        ),
+    ],
+) -> ToolResult:
+    """Interrupt, restart or shut down the kernel of the JupyterLab notebook opened with jupyter_connect."""
+    return await jupyter_call("jupyter_kernel", {"action": action}, timeout=150)
 
 
 async def _ensure_viewer() -> str | None:

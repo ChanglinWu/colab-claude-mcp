@@ -76,8 +76,10 @@ def main(argv: list[str] | None = None) -> int:
             print("hub: not running")
             return 1
         tab = "connected" if health.get("connected") else "not connected"
+        jupyter = "connected" if health.get("jupyter") else "not connected"
         print(f"hub: running (version {health.get('version')}, pid {health.get('pid')}); Colab tab: {tab}")
-        print(f"mirror: {config.mirror_url()}")
+        print(f"JupyterLab tab: {jupyter}")
+        print(f"mirror: {config.mirror_url()}  (JupyterLab: {config.jupyter_mirror_url()})")
         return 0
     # stop
     if _hub_request("/health") is None:

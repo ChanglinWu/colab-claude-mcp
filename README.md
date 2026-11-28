@@ -1,12 +1,14 @@
 # colab-claude-mcp
 
-An MCP server that lets Claude drive a Google Colab notebook open in your browser.
+An MCP server that lets Claude drive a Google Colab notebook open in your browser, and a JupyterLab
+notebook (for example on an HPC, through an SSH tunnel) through the JupyterLab tab you are logged in to.
 It is a fork of Google's [colab-mcp](https://github.com/googlecolab/colab-mcp), reworked for
 Claude Code and the Claude desktop app.
 
 中文简介：这是 Google 官方 colab-mcp 的一个分支，为 Claude 重构。连接由一个常驻的本地进程保持，
 所以换会话时不会重新打开 Colab 标签页；它还提供一个实时镜像页面，可以在 Claude 内置浏览器里
-查看 notebook 的单元格、运行状态和输出。
+查看 notebook 的单元格、运行状态和输出。同样的方式也能驱动 JupyterLab（例如经 SSH 隧道访问的 HPC）：
+在已登录的 JupyterLab 标签页里点一下书签，Claude 就通过这个标签页工作，不需要 Jupyter 密码。
 
 ## What is different from colab-mcp
 
@@ -115,6 +117,77 @@ uvx --from git+https://github.com/ChanglinWu/colab-claude-mcp colab-claude-mcp s
 - The mirror page is read-only and shows what the hub knows: cells and outputs as of the last sync
   (every 2 s while a cell runs or the page is open).
 - The Colab page decides which notebook operations exist; this server wraps the seven it offers today.
+
+## JupyterLab (for example on an HPC)
+
+The same tools drive a notebook on a Jupyter server, such as JupyterLab on an HPC node that you reach
+through an SSH tunnel (`ssh -N -L 8899:gpu12:8899 you@hpc` and `http://localhost:8899/lab`) and log in to
+with a password. Claude never gets the password: it works through the JupyterLab tab you are logged in to,
+the way it works through the Colab tab.
+
+中文：用同一套工具驱动 Jupyter 服务器上的 notebook，例如经 SSH 隧道访问、用密码登录的 HPC 上的 JupyterLab。
+Claude 拿不到也不需要密码：它通过你已登录的 JupyterLab 标签页工作，就像通过 Colab 标签页一样。
+notebook 每次改动后都保存在服务器上；在 Claude 内置浏览器里打开 `http://localhost:47822/jupyter/` 即可实时查看。
+
+### Use
+
+1. Once: open `http://localhost:47822/jupyter/setup` (the hub must be running: any colab-claude-mcp tool
+   starts it) and drag the *Claude ⇄ Jupyter* button to your browser's bookmarks bar.
+2. Each time: open JupyterLab, log in as usual, and click the bookmark in that tab. A small
+   *Claude ⇄ Jupyter: Claude connected* badge appears in its bottom right corner.
+3. Ask Claude to work in JupyterLab. It calls `jupyter_connect`, which opens a notebook on the server
+   (`claude/scratch.ipynb` unless it names one) and starts or reuses that notebook's kernel.
+4. Watch on the Jupyter mirror, `http://localhost:47822/jupyter/`, in the built-in browser.
+
+| Tool | What it does |
+|---|---|
+| `jupyter_connect` | Wait for a connected JupyterLab tab, open or create `notebook_path`, and start or reuse its kernel (`kernel` picks one of the server's kernels for a new notebook) |
+| `jupyter_status` | Tab, notebook, kernel state, the server's kernels, and the cells with their run status |
+| `jupyter_kernel` | `interrupt` the running cell, `restart` the kernel, or `shutdown` it to free memory and GPUs on the server |
+| cell tools | `get_cells`, `add_code_cell`, `add_text_cell`, `update_cell`, `run_code_cell`, `wait_for_cell`, `delete_cell` and `move_cell` act on the notebook this Claude session connected to last; `backend="colab"` or `"jupyter"` picks one |
+
+- The notebook is saved on the server after every change and every finished run, and every minute while a
+  cell runs, so nothing needs saving at the end and the outputs stay on the HPC.
+- Cell output streams in while a cell runs: a run that outlasts `wait_seconds` returns with its output so far.
+  Progress bars (tqdm, Keras) keep only their latest state, as in JupyterLab.
+- The kernel runs on the server. It keeps running when the tab closes, the hub restarts or the Claude session
+  ends; the next `jupyter_connect` to the same notebook reuses it with its variables. Output that the kernel
+  sends while no tab is connected is replayed by Jupyter when the tab comes back.
+- If the notebook is also open in JupyterLab, both share the kernel, but that tab shows Claude's edits only
+  after reloading from disk. When JupyterLab says the file changed on disk, choose **Revert** (load Claude's
+  version), not Overwrite. Claude takes in what you saved from JupyterLab before its next change.
+- After you reload the JupyterLab tab, click the bookmark again. If you click it in a second tab, that tab
+  takes over. If the hub restarts, the tab reconnects by itself.
+
+### How it works
+
+```
+Claude Code session ── stdio ──> colab-claude-mcp ── HTTP ──> hub (127.0.0.1:47822)
+                                                                │ websocket /jupyter/ws (token, localhost origins only)
+                                                                ▼
+                                JupyterLab tab (logged in) running jupyter_bridge.js
+                                                                │ the tab's own cookies and XSRF token
+                                                                ▼
+                                Jupyter server (localhost:8899 ── SSH tunnel ──> HPC node)
+```
+
+The bookmark loads `jupyter_bridge.js` from the hub into the JupyterLab page. The script relays the hub's REST
+requests (contents, sessions, kernels) and kernel websockets through the page's own session. The notebook
+logic is in the hub (`jupyter.py`): it reads and writes the `.ipynb` through the contents API and runs cells
+with the Jupyter messaging protocol over the kernel's websocket.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `COLAB_CLAUDE_JUPYTER_NOTEBOOK` | `claude/scratch.ipynb` | Notebook `jupyter_connect` opens when none is named, relative to JupyterLab's root folder |
+| `COLAB_CLAUDE_JUPYTER_ORIGINS` | none | Extra page origins allowed to connect, comma-separated. JupyterLab on `localhost` / `127.0.0.1` is always allowed |
+
+### Limits
+
+- The JupyterLab tab has to stay open, as the Colab tab does; a reload disconnects it until you click the
+  bookmark again.
+- Without JupyterLab's real-time collaboration, an open JupyterLab tab does not update live (see above).
+- `input()` is not supported, and widget binary buffers are not relayed (widgets still show their text form).
+- JupyterLab served over `https` cannot load the bridge from the hub's plain `http` address.
 
 ## MATLAB (local)
 
@@ -307,11 +380,15 @@ the host logs to `~/.colab-claude-mcp/matlab/host.log`.
 - The local API requires the token (`~/.colab-claude-mcp/token`, readable only by you).
 - The mirror page needs no token but answers only requests addressed to `localhost`, so other websites
   cannot read it. Other programs running as you on this machine can.
+- JupyterLab: the bridge script carries the token, so the hub serves it only to pages on this machine
+  (a browser marks a script that another site's page loads as cross-site, and that is refused). The tab's
+  websocket must come from a localhost origin (or one in `COLAB_CLAUDE_JUPYTER_ORIGINS`) with the token.
+  Your Jupyter password and login cookie never leave the browser; the bookmark holds no secret.
 
 ## Development
 
 ```bash
-uv run --group dev pytest        # tests use a simulated Colab page; no browser needed
+uv run --group dev pytest        # tests use a simulated Colab page and JupyterLab tab; no browser needed
 uv run --group dev ruff check .
 uv run colab-claude-mcp hub      # run the hub in the foreground
 ```

@@ -19,8 +19,9 @@
 import os
 from pathlib import Path
 import secrets
+from urllib.parse import urlsplit
 
-VERSION = "0.5.2"
+VERSION = "0.6.0"
 
 # Version of the HTTP API between the stdio server and the hub. A hub with a tab connected is
 # replaced only when this differs, so ordinary upgrades do not drop the tab.
@@ -60,6 +61,42 @@ def mirror_url() -> str:
 def matlab_url() -> str:
     """The MATLAB output page, served by the hub next to the Colab mirror."""
     return f"http://localhost:{http_port()}/matlab"
+
+
+def jupyter_mirror_url() -> str:
+    """The mirror page of the JupyterLab notebook, served by the hub next to the Colab mirror."""
+    return f"http://localhost:{http_port()}/jupyter/"
+
+
+def jupyter_setup_url() -> str:
+    """The page with the bookmarklet that links a JupyterLab tab to the hub."""
+    return f"http://localhost:{http_port()}/jupyter/setup"
+
+
+def jupyter_notebook() -> str:
+    """Notebook that jupyter_connect opens when none is named, relative to the Jupyter server's root."""
+    return os.environ.get("COLAB_CLAUDE_JUPYTER_NOTEBOOK", "claude/scratch.ipynb").strip().strip("/")
+
+
+LOOPBACK_NAMES = {"localhost", "127.0.0.1", "::1"}
+
+
+def jupyter_origin_allowed(origin: str) -> bool:
+    """Whether a page at this origin may link its JupyterLab tab to the hub.
+
+    JupyterLab reached through an SSH tunnel is served on localhost, so loopback origins are accepted.
+    Others must be listed in COLAB_CLAUDE_JUPYTER_ORIGINS (comma-separated, for example
+    "http://gpu12.example.edu:8899").
+    """
+    try:
+        parts = urlsplit(origin)
+        name = parts.hostname
+    except ValueError:
+        return False
+    if parts.scheme in ("http", "https") and name in LOOPBACK_NAMES:
+        return True
+    extra = {item.strip().rstrip("/") for item in os.environ.get("COLAB_CLAUDE_JUPYTER_ORIGINS", "").split(",")}
+    return bool(origin) and origin.rstrip("/") in extra - {""}
 
 
 def browser() -> str | None:

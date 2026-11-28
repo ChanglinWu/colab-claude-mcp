@@ -25,7 +25,6 @@ as a web page, the mirror, which can be opened in Claude's built-in browser.
 
 import asyncio
 from collections import deque
-from dataclasses import dataclass, field
 import hashlib
 import hmac
 import json
@@ -36,13 +35,16 @@ import time
 import webbrowser
 
 from starlette.applications import Starlette
-from starlette.requests import Request
+from starlette.requests import HTTPConnection, Request
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Response
-from starlette.routing import Route
+from starlette.routing import Route, WebSocketRoute
+from starlette.websockets import WebSocket
 import uvicorn
 
 from colab_claude_mcp import config, matlab_view, outputs
 from colab_claude_mcp.frontend import ColabFrontend, FrontendError, NotConnected
+from colab_claude_mcp.jupyter import CELL_OPS, JupyterSide
+from colab_claude_mcp.results import Run, err, ok
 
 log = logging.getLogger(__name__)
 
@@ -53,28 +55,7 @@ SOURCE_REFRESH_SECONDS = 2
 FULL_REFRESH_SECONDS = 10
 MAX_WAIT_SECONDS = 600
 PENDING_TAB_SECONDS = 15 * 60  # how long an opened tab that has not connected is waited for
-
-
-def ok(text: str, images: list[dict] | None = None) -> dict:
-    return {"text": text, "images": images or [], "is_error": False}
-
-
-def err(text: str) -> dict:
-    return {"text": text, "images": [], "is_error": True}
-
-
-@dataclass
-class Run:
-    cell_id: str
-    started: float = field(default_factory=time.time)
-    finished: float | None = None
-    status: str = "running"  # running | done | error | failed
-    error: str = ""
-    task: asyncio.Task | None = None
-
-    @property
-    def elapsed(self) -> float:
-        return (self.finished or time.time()) - self.started
+WS_MAX_SIZE = 512 * 1024 * 1024  # a notebook with its outputs travels in one message from the JupyterLab tab
 
 
 class Hub:
@@ -90,6 +71,7 @@ class Hub:
         self.http_port = http_port
         self.home = home or config.home()
         self.frontend = ColabFrontend(token, ws_port, on_change=self._frontend_changed)
+        self.jupyter = JupyterSide(self.home)  # a JupyterLab notebook, through the user's logged-in tab
         self.cells: list[dict] = []  # {"id", "type", "source"}
         self.outputs: dict[str, list[dict]] = {}
         self.cell_rev: dict[str, int] = {}
@@ -201,6 +183,8 @@ class Hub:
         while True:
             await asyncio.sleep(SOURCE_REFRESH_SECONDS)
             now = time.time()
+            if self.jupyter.bridge.is_connected:
+                self.last_activity = now  # the JupyterLab tab pushes its updates; it only needs the hub to stay up
             if self.frontend.is_connected:
                 self.last_activity = now
                 watching = now - self.last_mirror < MIRROR_ACTIVE_SECONDS
@@ -212,7 +196,7 @@ class Hub:
                     interval = max(base, 20 * self._full_refresh_cost)
                     await self._safe_refresh(include_outputs=now - self._last_full_refresh >= interval)
             elif now - self.last_activity > IDLE_EXIT_SECONDS:
-                log.info("idle with no Colab tab for %s s; exiting", IDLE_EXIT_SECONDS)
+                log.info("idle with no Colab or JupyterLab tab for %s s; exiting", IDLE_EXIT_SECONDS)
                 self.shutdown()
                 return
 
@@ -477,7 +461,22 @@ class Hub:
         result["is_error"] = run.status == "error"
         return result
 
+    def _for_jupyter(self, op: str, args: dict) -> bool:
+        """Whether a cell operation without an explicit jupyter_ prefix is meant for the JupyterLab notebook."""
+        backend = args.get("backend")
+        if backend in ("colab", "jupyter"):
+            return backend == "jupyter"
+        if op not in CELL_OPS:
+            return False
+        cell_id = args.get("cell_id")
+        if cell_id is not None:
+            return self.jupyter.owns(cell_id) and all(cell["id"] != cell_id for cell in self.cells)
+        return not self.frontend.is_connected and self.jupyter.is_open
+
     async def call(self, op: str, args: dict) -> dict:
+        if op.startswith("jupyter_") or self._for_jupyter(op, args):
+            self.last_activity = time.time()
+            return await self.jupyter.call(op.removeprefix("jupyter_"), args)
         handler = getattr(self, f"op_{op}", None)
         if handler is None:
             return err(f"Unknown operation: {op}")
@@ -522,12 +521,24 @@ class Hub:
         }
 
     def app(self) -> Starlette:
-        mirror = (Path(__file__).parent / "mirror.html").read_text(encoding="utf-8")
-        matlab_page = (Path(__file__).parent / "matlab.html").read_text(encoding="utf-8")
+        here = Path(__file__).parent
+        mirror = (here / "mirror.html").read_text(encoding="utf-8")
+        jupyter_mirror = mirror.replace("<title>Colab mirror</title>", "<title>Jupyter mirror</title>").replace(
+            "<h1>Colab mirror</h1>", "<h1>Jupyter mirror</h1>"
+        )
+        jupyter_setup_page = (here / "jupyter_setup.html").read_text(encoding="utf-8")
+        bridge_js = (
+            (here / "jupyter_bridge.js")
+            .read_text(encoding="utf-8")
+            .replace("__CCMCP_PORT__", json.dumps(self.http_port))
+            .replace("__CCMCP_TOKEN__", json.dumps(self.token))
+            .replace("__CCMCP_VERSION__", json.dumps(config.VERSION))
+        )
+        matlab_page = (here / "matlab.html").read_text(encoding="utf-8")
         matlab_dir = self.home / "matlab"
         no_store = {"Cache-Control": "no-store"}
 
-        def local(request: Request) -> bool:
+        def local(request: HTTPConnection) -> bool:
             # Rejecting other Host values stops DNS-rebinding pages from reading the notebook.
             host = request.headers.get("host", "")
             name = host[: host.index("]") + 1] if host.startswith("[") and "]" in host else host.split(":")[0]
@@ -545,6 +556,7 @@ class Hub:
                     "api": config.API_VERSION,
                     "pid": os.getpid(),
                     "connected": self.frontend.is_connected,
+                    "jupyter": self.jupyter.bridge.is_connected,
                 }
             )
 
@@ -600,6 +612,55 @@ class Hub:
             media = "application/pdf" if path.suffix == ".pdf" else "image/png"
             return FileResponse(path, media_type=media, headers={"Cache-Control": "private, max-age=3600"})
 
+        # The JupyterLab side: its mirror, the bookmarklet page, the bridge script and the tab's websocket.
+        async def jupyter_index(request: Request) -> Response:
+            if not local(request):
+                return Response(status_code=403)
+            self.last_mirror = time.time()
+            return HTMLResponse(jupyter_mirror)
+
+        async def jupyter_state(request: Request) -> Response:
+            if not local(request):
+                return Response(status_code=403)
+            self.last_mirror = time.time()
+            return JSONResponse(self.jupyter.snapshot(), headers=no_store)
+
+        async def jupyter_outputs(request: Request) -> Response:
+            if not local(request):
+                return Response(status_code=403)
+            cell_id = request.path_params["cell_id"]
+            return JSONResponse(
+                {"rev": self.jupyter.cell_rev.get(cell_id, 0), "items": self.jupyter.outputs.get(cell_id, [])},
+                headers=no_store,
+            )
+
+        async def jupyter_setup(request: Request) -> Response:
+            if not local(request):
+                return Response(status_code=403)
+            return HTMLResponse(jupyter_setup_page, headers=no_store)
+
+        async def jupyter_bridge(request: Request) -> Response:
+            # The script carries the token. Browsers mark a script that another site's page loads as
+            # cross-site, and such pages do not get it; the JupyterLab tab on localhost is same-site.
+            site = request.headers.get("sec-fetch-site")
+            if not local(request) or site not in (None, "same-origin", "same-site", "none"):
+                return Response(status_code=403)
+            headers = {**no_store, "Cross-Origin-Resource-Policy": "same-site"}
+            return Response(bridge_js, media_type="text/javascript", headers=headers)
+
+        async def jupyter_ws(websocket: WebSocket) -> None:
+            if not local(websocket) or not config.jupyter_origin_allowed(websocket.headers.get("origin", "")):
+                await websocket.close(code=1008)  # before accepting: the browser sees HTTP 403
+                return
+            await websocket.accept()
+            if not hmac.compare_digest(websocket.query_params.get("token", ""), self.token):
+                text = "the bridge's token is out of date: load it again from " + config.jupyter_setup_url()
+                await websocket.send_text(json.dumps({"type": "error", "text": text}))
+                await websocket.close(code=4003, reason="Bad token")
+                return
+            self.last_activity = time.time()
+            await self.jupyter.bridge.serve(websocket)
+
         async def api_call(request: Request) -> Response:
             if not local(request) or not authorized(request):
                 return Response(status_code=403)
@@ -622,6 +683,12 @@ class Hub:
                 Route("/matlab/state", matlab_state),
                 Route("/matlab/run/{run_id}", matlab_run),
                 Route("/matlab/file/{name}", matlab_file),
+                Route("/jupyter/", jupyter_index),
+                Route("/jupyter/state", jupyter_state),
+                Route("/jupyter/outputs/{cell_id}", jupyter_outputs),
+                Route("/jupyter/setup", jupyter_setup),
+                Route("/jupyter/bridge.js", jupyter_bridge),
+                WebSocketRoute("/jupyter/ws", jupyter_ws),
                 Route("/api/call", api_call, methods=["POST"]),
                 Route("/api/shutdown", api_shutdown, methods=["POST"]),
             ]
@@ -634,7 +701,15 @@ class Hub:
     async def serve(self) -> None:
         await self.frontend.start()
         self._server = uvicorn.Server(
-            uvicorn.Config(self.app(), host="127.0.0.1", port=self.http_port, log_level="warning", access_log=False)
+            uvicorn.Config(
+                self.app(),
+                host="127.0.0.1",
+                port=self.http_port,
+                log_level="warning",
+                access_log=False,
+                ws="websockets-sansio",  # uvicorn's other websockets implementation uses a deprecated API
+                ws_max_size=WS_MAX_SIZE,
+            )
         )
         background = self._spawn(self._background())
         log.info("hub %s listening; mirror at %s", config.VERSION, config.mirror_url())

@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Connect JupyterLab to Claude</title>
+<style>
+  :root {
+    --bg: #f6f5f1; --surface: #ffffff; --line: #dfddd5; --text: #1f1e1b; --muted: #6f6c63;
+    --accent: #b4540a; --ok: #2f7d4f; --bad: #b3261e;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #17171a; --surface: #1f2024; --line: #33353b; --text: #e8e6e1; --muted: #9a978f;
+      --accent: #f0a04b; --ok: #6cc08b; --bad: #f2867f; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.55 var(--sans); }
+  main { max-width: 720px; margin: 0 auto; padding: 28px 16px 48px; }
+  h1 { font-size: 21px; margin: 0 0 6px; }
+  h2 { font-size: 15px; margin: 28px 0 8px; }
+  p { margin: 0 0 10px; }
+  .zh, .muted { color: var(--muted); }
+  ol { padding-left: 22px; margin: 18px 0; }
+  li { margin-bottom: 14px; }
+  a { color: var(--accent); }
+  .bm { display: inline-block; margin: 8px 0 2px; padding: 7px 14px; border-radius: 999px; background: var(--accent);
+    color: #fff; text-decoration: none; font-weight: 600; cursor: grab; }
+  @media (prefers-color-scheme: dark) { .bm { color: #17171a; } }
+  .hint { min-height: 1.4em; font-size: 13px; color: var(--accent); }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+  .on .dot { background: var(--ok); } .off .dot { background: var(--bad); }
+  pre { margin: 8px 0; padding: 9px 11px; background: var(--surface); border: 1px solid var(--line); border-radius: 6px;
+    font: 12.5px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+  button { font: 13px var(--sans); padding: 4px 12px; border-radius: 6px; border: 1px solid var(--line);
+    background: var(--surface); color: var(--text); cursor: pointer; }
+  details summary { cursor: pointer; }
+  kbd { font: 12px var(--mono); padding: 1px 5px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Connect JupyterLab to Claude</h1>
+  <p>Claude works in your JupyterLab (for example on the HPC, through your SSH tunnel) through the browser tab you
+    are logged in to. It never needs your Jupyter password.</p>
+  <p class="zh">Claude 通过你已登录的 JupyterLab 标签页工作，不需要你的 Jupyter 密码。</p>
+
+  <ol>
+    <li><strong>Once:</strong> drag this button to your browser's bookmarks bar (show the bar with
+      <kbd>⌘</kbd><kbd>⇧</kbd><kbd>B</kbd> in Chrome).<br>
+      <a id="bookmarklet" class="bm" href="#" title="Drag me to the bookmarks bar">Claude ⇄ Jupyter</a>
+      <div id="hint" class="hint" aria-live="polite"></div>
+      <span class="zh">只需一次：把上面的按钮拖到书签栏。</span></li>
+    <li><strong>Each time:</strong> open JupyterLab and log in as usual, then click the bookmark in that tab. A small
+      <em>Claude ⇄ Jupyter: Claude connected</em> badge appears in its bottom right corner.<br>
+      <span class="zh">每次：打开 JupyterLab、照常输入密码登录，然后在那个标签页里点一下这个书签。</span></li>
+    <li>Ask Claude to connect to JupyterLab. Follow the notebook on the <a href="/jupyter/">Jupyter mirror</a>.</li>
+  </ol>
+
+  <h2>Status</h2>
+  <div class="card"><span id="state" class="pill off"><span class="dot"></span><span id="state-text">Checking…</span></span></div>
+
+  <h2>Good to know</h2>
+  <p class="muted">The bookmark holds no secret: it loads the bridge script from Claude's hub on this computer, which
+    then talks to the Jupyter server only through that tab. Reloading or closing the tab disconnects it; click the
+    bookmark again after a reload. If you click it in a second JupyterLab tab, that tab takes over.</p>
+  <details>
+    <summary>Without a bookmark</summary>
+    <p class="muted">Paste this into the JupyterLab tab's JavaScript console (<kbd>⌥</kbd><kbd>⌘</kbd><kbd>J</kbd> in Chrome):</p>
+    <pre id="snippet"></pre>
+    <button id="copy" type="button">Copy</button> <span id="copied" class="muted" aria-live="polite"></span>
+  </details>
+</main>
+<script>
+  const port = location.port || "80";
+  const code = "(function(){var s=document.createElement('script');s.src='http://'+location.hostname+':" + port +
+    "/jupyter/bridge.js?'+Date.now();document.head.appendChild(s);})();";
+  const link = document.getElementById("bookmarklet");
+  link.href = "javascript:" + code;
+  link.addEventListener("click", (event) => {
+    event.preventDefault();
+    document.getElementById("hint").textContent =
+      "Drag the button to the bookmarks bar, then click it there while your JupyterLab tab is open.";
+  });
+  document.getElementById("snippet").textContent = code;
+  document.getElementById("copy").addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      document.getElementById("copied").textContent = "Copied.";
+    } catch (error) {
+      document.getElementById("copied").textContent = "Select the text above and copy it.";
+    }
+  });
+  async function tick() {
+    const box = document.getElementById("state");
+    const text = document.getElementById("state-text");
+    try {
+      const state = await (await fetch("/jupyter/state", {cache: "no-store"})).json();
+      box.className = "pill " + (state.connected ? "on" : "off");
+      text.textContent = state.connected
+        ? "A JupyterLab tab is connected" + (state.notebook ? ": " + state.notebook : "") + "."
+        : "No JupyterLab tab is connected.";
+    } catch (error) {
+      box.className = "pill off";
+      text.textContent = "Claude's hub is not running.";
+    }
+  }
+  tick();
+  setInterval(tick, 2000);
+</script>
+</body>
+</html>
