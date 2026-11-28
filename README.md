@@ -116,6 +116,9 @@ uvx --from git+https://github.com/ChanglinWu/colab-claude-mcp colab-claude-mcp s
 - The tab uses whichever Google account that browser opens Colab with.
 - The mirror page is read-only and shows what the hub knows: cells and outputs as of the last sync
   (every 2 s while a cell runs or the page is open).
+- Next to each code cell, a short tag in the style of IPython's `In`/`Out` prompts and the run time:
+  **Run** (running), **Err** (error), **Warn** (warnings on stderr; progress bars do not count), **Out**
+  (has output) or **Done** (finished, no output). Hover over the tag for the details.
 - Markdown cells are rendered as in JupyterLab: tables, images, HTML and LaTeX math (`$…$`, `$$…$$`,
   `\begin{align}…`, typeset with KaTeX; `\newcommand` carries over to later cells). Double-click a Markdown
   cell to see its source. Markdown and LaTeX outputs, such as `display(Markdown(…))` or SymPy results, are

@@ -115,6 +115,14 @@ def has_error(items: list[dict]) -> bool:
     return any(item["kind"] == "error" for item in items)
 
 
+# Python's warnings and most logging go to stderr with the word in them; progress bars (tqdm) do not.
+WARNING = re.compile(r"warning|\bwarn\b", re.IGNORECASE)
+
+
+def has_warning(items: list[dict]) -> bool:
+    return any(item["kind"] == "stream" and item["name"] == "stderr" and WARNING.search(item["text"]) for item in items)
+
+
 def _clip(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text

@@ -1,6 +1,6 @@
 [project]
 name = "colab-claude-mcp"
-version = "0.7.0"
+version = "0.7.1"
 description = "An MCP server that lets Claude drive a Google Colab notebook (persistent tab, live mirror page), a JupyterLab notebook through a logged-in tab (for example on an HPC) and a local MATLAB session"
 readme = "README.md"
 license = "Apache-2.0"

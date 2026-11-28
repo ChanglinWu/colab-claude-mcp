@@ -70,6 +70,10 @@ class FakeKernel:
             for percent in (0, 25, 50, 75, 100):
                 iopub("stream", {"name": "stderr", "text": f"\r{percent:3d}%"})
             iopub("stream", {"name": "stderr", "text": "\n"})
+        if "warn" in code:  # what Python's warnings module prints
+            iopub(
+                "stream", {"name": "stderr", "text": "/tmp/x.py:1: UserWarning: careful\n  warnings.warn('careful')\n"}
+            )
         if "plot" in code:
             iopub("display_data", {"data": {"text/plain": "<Figure>", "image/png": PNG}, "metadata": {}})
         if "slow" in code:

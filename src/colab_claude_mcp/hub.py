@@ -506,6 +506,7 @@ class Hub:
         cells = []
         for index, cell in enumerate(self.cells):
             run = self.runs.get(cell["id"])
+            items = self.outputs.get(cell["id"], [])
             cells.append(
                 {
                     "id": cell["id"],
@@ -516,7 +517,9 @@ class Hub:
                     "started": run.started if run else None,
                     "finished": run.finished if run else None,
                     "rev": self.cell_rev.get(cell["id"], 0),
-                    "outputs": len(self.outputs.get(cell["id"], [])),
+                    "outputs": len(items),
+                    "error": outputs.has_error(items),  # the mirror's Err / Warn tags
+                    "warn": outputs.has_warning(items),
                 }
             )
         return {

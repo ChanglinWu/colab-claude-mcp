@@ -60,3 +60,14 @@ def test_markdown_and_latex_outputs_keep_their_source_for_the_mirror():
     assert items[0] == {"kind": "text", "text": "**bold**", "format": "markdown"}
     assert items[1] == {"kind": "text", "text": "x**2", "latex": "$\\displaystyle x^{2}$"}
     assert outputs.render(items)[0] == "**bold**\nx**2"  # Claude reads the same text as before
+
+
+def test_has_warning_looks_for_warnings_on_stderr_only():
+    def stream(name, text):
+        return [{"kind": "stream", "name": name, "text": text}]
+
+    assert outputs.has_warning(stream("stderr", "/a.py:3: DeprecationWarning: old\n"))
+    assert outputs.has_warning(stream("stderr", "WARNING:root:disk almost full\n"))
+    assert not outputs.has_warning(stream("stderr", "\r 50%|█████     | 5/10\n"))  # tqdm
+    assert not outputs.has_warning(stream("stdout", "printed the word warning\n"))
+    assert not outputs.has_warning([{"kind": "text", "text": "UserWarning"}])

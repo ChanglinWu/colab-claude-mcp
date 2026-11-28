@@ -21,7 +21,7 @@ from pathlib import Path
 import secrets
 from urllib.parse import urlsplit
 
-VERSION = "0.7.0"
+VERSION = "0.7.1"
 
 # Version of the HTTP API between the stdio server and the hub. A hub with a tab connected is
 # replaced only when this differs, so ordinary upgrades do not drop the tab.

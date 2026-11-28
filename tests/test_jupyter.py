@@ -379,3 +379,18 @@ async def test_the_mirror_gets_the_header_fields_and_the_markdown_images(harness
         other = {"Sec-Fetch-Site": "cross-site"}  # another site's page may not embed the notebook's images
         assert (await client.get("/jupyter/file", params={"src": "figures/a.png"}, headers=other)).status_code == 403
         assert (await client.get("/jupyter/attachment/md1/x.png", headers=other)).status_code == 403
+
+
+async def test_the_mirror_learns_which_cells_warned_or_failed(harness):
+    await connected(harness)
+    for code in ("x = 1", "warn()", "progress", "boom", "plot()"):
+        await harness.call("add_code_cell", backend="jupyter", code=code, run=True)
+    cells = harness.hub.jupyter.snapshot()["cells"]
+    flags = [(cell["status"], cell["error"], cell["warn"]) for cell in cells]
+    assert flags == [
+        ("done", False, False),
+        ("done", False, True),
+        ("done", False, False),  # a progress bar on stderr is not a warning
+        ("error", True, False),
+        ("done", False, False),
+    ]
