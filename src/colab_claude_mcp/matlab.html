@@ -7,34 +7,53 @@
 <style>
   :root {
     --bg: #f6f5f1; --surface: #ffffff; --line: #dfddd5; --text: #1f1e1b; --muted: #6f6c63;
-    --code-bg: #fbfaf7; --accent: #b4540a; --ok: #2f7d4f; --bad: #b3261e; --run: #b4540a;
+    --code-bg: #fbfaf7; --accent: #b4540a; --accent-soft: #f4e6d9; --ok: #2f7d4f; --bad: #b3261e; --run: #b4540a;
     --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #17171a; --surface: #1f2024; --line: #33353b; --text: #e8e6e1; --muted: #9a978f;
-      --code-bg: #1a1b1f; --accent: #f0a04b; --ok: #6cc08b; --bad: #f2867f; --run: #f0a04b;
+      --code-bg: #1a1b1f; --accent: #f0a04b; --accent-soft: #3b2d20; --ok: #6cc08b; --bad: #f2867f; --run: #f0a04b;
     }
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 var(--sans); }
-  header {
-    position: sticky; top: 0; z-index: 2; background: var(--bg); border-bottom: 1px solid var(--line);
-    padding: 10px 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
-  }
-  h1 { font-size: 15px; font-weight: 600; margin: 0; }
-  .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 2px 9px;
+  /* Header: the same page switcher as the notebook mirrors. */
+  header.top { position: sticky; top: 0; z-index: 3; background: var(--bg); border-bottom: 1px solid var(--line); }
+  .row { max-width: 980px; margin: 0 auto; padding: 0 16px; display: flex; align-items: center; gap: 10px; }
+  .appbar { padding-top: 8px; padding-bottom: 4px; }
+  .docbar { padding-bottom: 9px; }
+  nav.views { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--surface); flex: none; }
+  nav.views a { padding: 2px 11px; border-radius: 6px; font-size: 12.5px; line-height: 20px; color: var(--muted);
+    text-decoration: none; }
+  nav.views a:hover { color: var(--text); }
+  nav.views a[aria-current="page"] { background: var(--accent-soft); color: var(--text); font-weight: 600; }
+  .status { margin-left: auto; display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 2px 9px; min-width: 0;
     border: 1px solid var(--line); border-radius: 999px; background: var(--surface); white-space: nowrap; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .pill > span:last-child { overflow: hidden; text-overflow: ellipsis; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
   .on .dot { background: var(--ok); } .off .dot { background: var(--bad); }
-  .meta { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; min-width: 0; }
-  label.follow { margin-left: auto; font-size: 12px; color: var(--muted); display: flex; gap: 5px; align-items: center; }
-  a.nav { font-size: 12px; color: var(--accent); text-decoration: none; white-space: nowrap; }
-  a.nav:hover { text-decoration: underline; }
+  .doc { flex: 1 1 auto; min-width: 0; display: flex; align-items: baseline; gap: 8px; }
+  .doc-name { font-size: 15px; font-weight: 650; white-space: nowrap; }
+  .doc-where { font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  label.follow { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted);
+    cursor: pointer; user-select: none; white-space: nowrap; flex: none; }
+  label.follow input { appearance: none; position: relative; width: 26px; height: 15px; margin: 0; border-radius: 999px;
+    background: var(--line); cursor: pointer; flex: none; }
+  label.follow input::after { content: ""; position: absolute; top: 2px; left: 2px; width: 11px; height: 11px;
+    border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, .3); }
+  label.follow input:checked { background: var(--accent); }
+  label.follow input:checked::after { transform: translateX(11px); }
+  label.follow input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  @media (prefers-reduced-motion: no-preference) {
+    label.follow input, label.follow input::after { transition: background .15s, transform .15s; }
+  }
   main { max-width: 980px; margin: 0 auto; padding: 14px 16px 40px; }
   .empty { color: var(--muted); padding: 40px 0; text-align: center; }
-  .cell { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 8px; margin-bottom: 12px; scroll-margin-top: 56px; }
+  .cell { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 8px; margin-bottom: 12px; scroll-margin-top: 100px; }
   .gutter { font: 12px var(--mono); color: var(--muted); padding-top: 9px; text-align: right; }
   .gutter .state { display: block; margin-top: 3px; font-family: var(--sans); font-size: 11px; }
   .running .state { color: var(--run); font-weight: 600; }
@@ -69,12 +88,21 @@
 </style>
 </head>
 <body>
-<header>
-  <h1>MATLAB output</h1>
-  <span id="sess" class="pill off"><span class="dot"></span><span id="sess-text">Connecting…</span></span>
-  <span id="meta" class="meta"></span>
-  <label class="follow"><input id="follow" type="checkbox" checked> Follow newest run</label>
-  <a class="nav" href="/">Colab mirror</a>
+<header class="top">
+  <div class="row appbar">
+    <nav class="views" aria-label="Pages">
+      <a href="/" data-view="colab">Colab</a>
+      <a href="/jupyter/" data-view="jupyter">Jupyter</a>
+      <a href="/matlab" data-view="matlab" aria-current="page">MATLAB</a>
+    </nav>
+    <div class="status">
+      <label class="follow" title="Scroll to the newest run"><input id="follow" type="checkbox" checked>Follow</label>
+      <span id="sess" class="pill off" role="status"><span class="dot"></span><span id="sess-text">Connecting…</span></span>
+    </div>
+  </div>
+  <div class="row docbar">
+    <div class="doc"><span class="doc-name">MATLAB output</span><span id="meta" class="doc-where"></span></div>
+  </div>
 </header>
 <main id="runs"><p class="empty">Waiting for the hub…</p></main>
 <script>

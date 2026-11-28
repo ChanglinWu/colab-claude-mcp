@@ -56,6 +56,14 @@ FULL_REFRESH_SECONDS = 10
 MAX_WAIT_SECONDS = 600
 PENDING_TAB_SECONDS = 15 * 60  # how long an opened tab that has not connected is waited for
 WS_MAX_SIZE = 512 * 1024 * 1024  # a notebook with its outputs travels in one message from the JupyterLab tab
+# The mirror pages' Markdown and math libraries (vendor/README.md). Folder names carry the version.
+VENDOR_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".woff2": "font/woff2"}
+# Images from a notebook are shown, never run: opened on their own they get no scripts and no origin.
+IMAGE_HEADERS = {
+    "Cache-Control": "private, max-age=60",
+    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+    "X-Content-Type-Options": "nosniff",
+}
 
 
 class Hub:
@@ -523,9 +531,8 @@ class Hub:
     def app(self) -> Starlette:
         here = Path(__file__).parent
         mirror = (here / "mirror.html").read_text(encoding="utf-8")
-        jupyter_mirror = mirror.replace("<title>Colab mirror</title>", "<title>Jupyter mirror</title>").replace(
-            "<h1>Colab mirror</h1>", "<h1>Jupyter mirror</h1>"
-        )
+        jupyter_mirror = mirror.replace("<title>Colab mirror</title>", "<title>Jupyter mirror</title>")
+        vendor_dir = (here / "vendor").resolve()
         jupyter_setup_page = (here / "jupyter_setup.html").read_text(encoding="utf-8")
         bridge_js = (
             (here / "jupyter_bridge.js")
@@ -547,6 +554,19 @@ class Hub:
         def authorized(request: Request) -> bool:
             scheme, _, value = request.headers.get("authorization", "").partition(" ")
             return scheme.lower() == "bearer" and hmac.compare_digest(value.strip(), self.token)
+
+        def from_mirror(request: Request) -> bool:
+            # The notebook's images are for the mirror page; other sites' pages may not embed them.
+            return local(request) and request.headers.get("sec-fetch-site") in (None, "same-origin", "none")
+
+        async def vendor_file(request: Request) -> Response:
+            if not local(request):
+                return Response(status_code=403)
+            path = (vendor_dir / request.path_params["path"]).resolve()
+            if vendor_dir not in path.parents or path.suffix not in VENDOR_TYPES or not path.is_file():
+                return Response(status_code=404)
+            headers = {"Cache-Control": "public, max-age=604800, immutable", "X-Content-Type-Options": "nosniff"}
+            return FileResponse(path, media_type=VENDOR_TYPES[path.suffix], headers=headers)
 
         async def health(request: Request) -> Response:
             return JSONResponse(
@@ -634,6 +654,24 @@ class Hub:
                 headers=no_store,
             )
 
+        async def jupyter_attachment(request: Request) -> Response:
+            # ![](attachment:name.png) in a Markdown cell: the image is stored in the cell itself.
+            if not from_mirror(request):
+                return Response(status_code=403)
+            found = self.jupyter.attachment(request.path_params["cell_id"], request.path_params["name"])
+            if found is None:
+                return Response(status_code=404)
+            return Response(found[0], media_type=found[1], headers=IMAGE_HEADERS)
+
+        async def jupyter_file(request: Request) -> Response:
+            # ![](figures/a.png) in a Markdown cell: an image file next to the notebook on the Jupyter server.
+            if not from_mirror(request):
+                return Response(status_code=403)
+            found = await self.jupyter.image_file(request.query_params.get("src", ""))
+            if found is None:
+                return Response(status_code=404)
+            return Response(found[0], media_type=found[1], headers=IMAGE_HEADERS)
+
         async def jupyter_setup(request: Request) -> Response:
             if not local(request):
                 return Response(status_code=403)
@@ -686,6 +724,9 @@ class Hub:
                 Route("/jupyter/", jupyter_index),
                 Route("/jupyter/state", jupyter_state),
                 Route("/jupyter/outputs/{cell_id}", jupyter_outputs),
+                Route("/jupyter/attachment/{cell_id}/{name}", jupyter_attachment),
+                Route("/jupyter/file", jupyter_file),
+                Route("/vendor/{path:path}", vendor_file),
                 Route("/jupyter/setup", jupyter_setup),
                 Route("/jupyter/bridge.js", jupyter_bridge),
                 WebSocketRoute("/jupyter/ws", jupyter_ws),

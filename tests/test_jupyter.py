@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 
 import httpx
@@ -12,6 +13,7 @@ from colab_claude_mcp.jupyter import OutputCollector, collapse_cr
 from tests.fake_jupyter import FakeServer, FakeTab
 
 TOKEN = "test-token"
+PNG_BYTES = b"\x89PNG\r\n\x1a\n" + bytes(range(16))
 
 
 class Harness:
@@ -329,8 +331,8 @@ async def test_pages_and_the_bridge_script(harness):
     async with httpx.AsyncClient(transport=transport, base_url="http://localhost:47822") as client:
         page = await client.get("/jupyter/")
         assert "<title>Jupyter mirror</title>" in page.text
-        assert '"Colab mirror"' in page.text  # the link back to the Colab mirror is not renamed
-        assert page.status_code == 200 and "Jupyter mirror" in page.text
+        assert 'href="/" data-view="colab"' in page.text and 'href="/matlab"' in page.text  # the page switcher
+        assert page.status_code == 200 and "/vendor/katex-0.19.1/katex.min.js" in page.text
         assert (await client.get("/jupyter", follow_redirects=True)).status_code == 200
         state = (await client.get("/jupyter/state")).json()
         assert state["kind"] == "jupyter" and not state["connected"]
@@ -343,3 +345,37 @@ async def test_pages_and_the_bridge_script(harness):
         assert (await client.get("/jupyter/state", headers={"Host": "evil.example"})).status_code == 403
         colab = await client.get("/")
         assert "Colab mirror" in colab.text and 'href="/jupyter/"' in colab.text
+
+
+async def test_the_mirror_gets_the_header_fields_and_the_markdown_images(harness):
+    png = base64.b64encode(PNG_BYTES).decode()
+    harness.server.files["docs/figures/a.png"] = {"type": "file", "format": "base64", "content": png}
+    harness.server.files["docs/notes.txt"] = {"type": "file", "format": "text", "content": "not an image"}
+    cell = {
+        "cell_type": "markdown",
+        "id": "md1",
+        "metadata": {},
+        "source": "![one](attachment:x.png) ![two](figures/a.png)",
+        "attachments": {"x.png": {"image/png": png}, "y.svg": {"image/svg+xml": ["<svg/>"]}},
+    }
+    harness.server.save("docs/demo.ipynb", {"cells": [cell], "metadata": {}, "nbformat": 4, "nbformat_minor": 5})
+    await connected(harness, notebook_path="docs/demo.ipynb")
+    transport = httpx.ASGITransport(app=harness.hub.app())
+    async with httpx.AsyncClient(transport=transport, base_url="http://localhost:47822") as client:
+        state = (await client.get("/jupyter/state")).json()
+        assert state["path"] == "docs/demo.ipynb" and state["server"]
+        assert state["kernel_name"] == "Python 3 (ipykernel)" and state["kernel_state"]
+        found = await client.get("/jupyter/attachment/md1/x.png", headers={"Sec-Fetch-Site": "same-origin"})
+        assert found.status_code == 200 and found.content == PNG_BYTES
+        assert found.headers["content-type"] == "image/png" and "sandbox" in found.headers["content-security-policy"]
+        svg = await client.get("/jupyter/attachment/md1/y.svg")
+        assert svg.content == b"<svg/>" and svg.headers["content-type"].startswith("image/svg+xml")
+        assert (await client.get("/jupyter/attachment/md1/z.png")).status_code == 404
+        image = await client.get("/jupyter/file", params={"src": "figures/a.png"})
+        assert image.status_code == 200 and image.content == PNG_BYTES
+        assert (await client.get("/jupyter/file", params={"src": "notes.txt"})).status_code == 404  # images only
+        assert (await client.get("/jupyter/file", params={"src": "../../a.png"})).status_code == 404
+        assert (await client.get("/jupyter/file", params={"src": "/docs/figures/a.png"})).status_code == 404
+        other = {"Sec-Fetch-Site": "cross-site"}  # another site's page may not embed the notebook's images
+        assert (await client.get("/jupyter/file", params={"src": "figures/a.png"}, headers=other)).status_code == 403
+        assert (await client.get("/jupyter/attachment/md1/x.png", headers=other)).status_code == 403

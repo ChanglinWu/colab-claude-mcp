@@ -116,6 +116,10 @@ uvx --from git+https://github.com/ChanglinWu/colab-claude-mcp colab-claude-mcp s
 - The tab uses whichever Google account that browser opens Colab with.
 - The mirror page is read-only and shows what the hub knows: cells and outputs as of the last sync
   (every 2 s while a cell runs or the page is open).
+- Markdown cells are rendered as in JupyterLab: tables, images, HTML and LaTeX math (`$…$`, `$$…$$`,
+  `\begin{align}…`, typeset with KaTeX; `\newcommand` carries over to later cells). Double-click a Markdown
+  cell to see its source. Markdown and LaTeX outputs, such as `display(Markdown(…))` or SymPy results, are
+  rendered too. The libraries are served by the hub (`src/colab_claude_mcp/vendor/`), so this works offline.
 - The Colab page decides which notebook operations exist; this server wraps the seven it offers today.
 
 ## JupyterLab (for example on an HPC)
@@ -158,6 +162,8 @@ notebook 每次改动后都保存在服务器上；在 Claude 内置浏览器里
   version), not Overwrite. Claude takes in what you saved from JupyterLab before its next change.
 - After you reload the JupyterLab tab, click the bookmark again. If you click it in a second tab, that tab
   takes over. If the hub restarts, the tab reconnects by itself.
+- Images in Markdown cells show on the mirror page wherever they live: on the web, pasted into the cell
+  (`attachment:`), or in a file next to the notebook (`figures/a.png`, read from the server through the tab).
 
 ### How it works
 
@@ -248,7 +254,8 @@ recommends it; without it the MATLAB tools work the same.
 `http://localhost:47822/matlab` shows the MATLAB runs like a notebook, newest last: each run's code
 (or script), printed output, warnings, errors and figures, with its status and run time. Ask Claude to
 open it in the built-in browser; with MATLAB headless, it is the output window. It follows the newest
-run unless you untick *Follow newest run*, and links to the Colab mirror (which links back).
+run unless you switch off *Follow*. The switcher at the top of each page (Colab, Jupyter, MATLAB) moves
+between the three pages.
 
 - Figures saved as PDF (`pdf=true`) get a *Download vector PDF* link under them.
 - A run shows as running, with a timer, until it ends; then its output and figures appear. MATLAB hands
@@ -384,6 +391,10 @@ the host logs to `~/.colab-claude-mcp/matlab/host.log`.
   (a browser marks a script that another site's page loads as cross-site, and that is refused). The tab's
   websocket must come from a localhost origin (or one in `COLAB_CLAUDE_JUPYTER_ORIGINS`) with the token.
   Your Jupyter password and login cookie never leave the browser; the bookmark holds no secret.
+- Notebook text is not trusted on the mirror pages. Markdown is sanitized with DOMPurify before it is shown
+  (no scripts, event handlers, forms, styles or frames), KaTeX runs with `trust: false`, and HTML outputs run
+  in sandboxed frames without the page's origin. Images from the Jupyter server are served only to the mirror
+  page itself, as images with a sandboxing Content-Security-Policy.
 
 ## Development
 
@@ -397,3 +408,7 @@ uv run colab-claude-mcp hub      # run the hub in the foreground
 
 Apache 2.0, as upstream. Original work © Google Inc.; see the header of each file for what changed.
 This project is not affiliated with or endorsed by Google.
+
+The mirror pages include, unchanged, [marked](https://github.com/markedjs/marked) (MIT),
+[DOMPurify](https://github.com/cure53/DOMPurify) (Apache-2.0 or MPL-2.0) and [KaTeX](https://github.com/KaTeX/KaTeX)
+(MIT), each with its license, in `src/colab_claude_mcp/vendor/` (versions and checksums in its README).

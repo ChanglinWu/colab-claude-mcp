@@ -29,6 +29,7 @@ kernel's websocket (Jupyter messaging protocol 5.3, JSON frames, no websocket su
 """
 
 import asyncio
+import base64
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -75,6 +76,18 @@ FLUSH_SECONDS = 0.3  # how often streamed output is copied for the mirror page
 CLOSE_REPLACED = 4000  # a newer JupyterLab tab took over
 OUTPUT_TYPES = frozenset({"stream", "display_data", "execute_result", "error", "update_display_data", "clear_output"})
 CELL_ID = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+# Images that Markdown cells show: stored in the cell (attachments) or in files next to the notebook.
+ATTACHMENT_TYPES = ("image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml", "image/bmp")
+IMAGE_FILES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".svg": "image/svg+xml",
+    ".bmp": "image/bmp",
+}
+MAX_IMAGE_BYTES = 25 * 1024 * 1024
 
 NO_TAB = (
     "Ask the user to open JupyterLab in their browser, log in as usual, and click the 'Claude ⇄ Jupyter' "
@@ -744,6 +757,39 @@ class JupyterSide:
             raise BridgeError(_http_error("GET", path, status, text))
         return json.loads(text)
 
+    def attachment(self, cell_id: str, name: str) -> tuple[bytes, str] | None:
+        """An image stored in a Markdown cell, ![](attachment:name), for the mirror page."""
+        cell = self._find(cell_id)
+        bundle = ((cell or {}).get("attachments") or {}).get(name)
+        mime = next((mime for mime in ATTACHMENT_TYPES if mime in bundle), None) if isinstance(bundle, dict) else None
+        if mime is None:
+            return None
+        data = outputs._join(bundle[mime])
+        try:
+            return (data.encode() if mime == "image/svg+xml" else base64.b64decode(data)), mime
+        except ValueError:
+            return None
+
+    async def image_file(self, src: str) -> tuple[bytes, str] | None:
+        """An image file next to the notebook, ![](figures/a.png), read through the tab for the mirror page."""
+        if not self.path or not src or src.startswith("/"):
+            return None
+        path = posixpath.normpath(posixpath.join(posixpath.dirname(self.path), src))
+        mime = IMAGE_FILES.get(posixpath.splitext(path)[1].lower())
+        if mime is None or path == ".." or path.startswith("../"):
+            return None
+        try:
+            status, text = await self.bridge.http("GET", _contents(path, type="file", format="base64", content="1"))
+            if status != 200:
+                return None
+            model = json.loads(text)
+            content = model.get("content") or ""
+            data = base64.b64decode(content) if model.get("format") == "base64" else content.encode()
+        except (BridgeError, TimeoutError, ValueError, AttributeError) as exc:
+            log.info("image %s for the mirror page: %s", path, exc)
+            return None
+        return (data, mime) if len(data) <= MAX_IMAGE_BYTES else None
+
     async def _ensure_dirs(self, directory: str) -> None:
         parts = [part for part in directory.split("/") if part]
         for depth in range(1, len(parts) + 1):
@@ -1299,7 +1345,11 @@ class JupyterSide:
             "rev": self.rev,
             "now": time.time(),
             "notebook": f"{self.path} on {where}" if self.path and where else self.path,
+            "path": self.path,
+            "server": where or None,
             "kernel": kernel,
+            "kernel_name": (self.kernel_display or self.kernel.name) if self.kernel else None,
+            "kernel_state": self.kernel.state if self.kernel else None,
             "cells": cells,
             "events": list(self.events)[-40:],
         }

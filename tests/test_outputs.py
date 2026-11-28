@@ -45,3 +45,18 @@ def test_save_images(tmp_path):
 
 def test_extract_outputs_tolerates_garbage():
     assert outputs.extract_outputs({"content": [{"type": "text", "text": "not json"}]}) == []
+
+
+def test_markdown_and_latex_outputs_keep_their_source_for_the_mirror():
+    items = outputs.normalize(
+        [
+            {"output_type": "display_data", "data": {"text/markdown": ["**bold**"], "text/plain": ["<Markdown>"]}},
+            {
+                "output_type": "execute_result",
+                "data": {"text/latex": ["$\\displaystyle x^{2}$"], "text/plain": ["x**2"]},
+            },
+        ]
+    )
+    assert items[0] == {"kind": "text", "text": "**bold**", "format": "markdown"}
+    assert items[1] == {"kind": "text", "text": "x**2", "latex": "$\\displaystyle x^{2}$"}
+    assert outputs.render(items)[0] == "**bold**\nx**2"  # Claude reads the same text as before

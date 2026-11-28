@@ -1,9 +1,12 @@
 import asyncio
+from pathlib import Path
+import re
 
 import httpx
 import pytest
 import websockets
 
+from colab_claude_mcp import hub as hub_module
 from colab_claude_mcp.hub import Hub
 from tests.fake_colab import FakeColab
 
@@ -204,3 +207,26 @@ async def test_http_api(harness):
         good = await client.post("/api/call", json={"op": "status"}, headers={"Authorization": f"Bearer {TOKEN}"})
         assert good.status_code == 200 and "Connected" in good.json()["text"]
         assert (await client.get("/state", headers={"Host": "evil.example"})).status_code == 403
+
+
+async def test_the_mirror_pages_get_their_vendored_libraries(harness):
+    here = Path(hub_module.__file__).parent
+    page = (here / "mirror.html").read_text(encoding="utf-8")
+    names = re.findall(r"/vendor/([^\"']+)", page)
+    assert len(names) == 4, names  # KaTeX's style sheet and the three scripts
+    css = next(here.glob("vendor/katex-*/katex.min.css"))
+    fonts = sorted(set(re.findall(r"url\((fonts/[^)]+\.woff2)\)", css.read_text(encoding="utf-8"))))
+    assert len(fonts) == 20
+    transport = httpx.ASGITransport(app=harness.hub.app())
+    async with httpx.AsyncClient(transport=transport, base_url="http://localhost:47822") as client:
+        for name in names + [str(css.parent.relative_to(here / "vendor") / font) for font in fonts]:
+            response = await client.get("/vendor/" + name)
+            assert response.status_code == 200 and response.content, name
+            assert "immutable" in response.headers["cache-control"]
+        script = await client.get("/vendor/" + next(name for name in names if name.endswith("katex.min.js")))
+        assert script.headers["content-type"].startswith("text/javascript")
+        assert (await client.get("/vendor/..%2Fhub.py")).status_code == 404
+        assert (await client.get("/vendor/README.md")).status_code == 404  # scripts, styles and fonts only
+        assert (
+            await client.get("/vendor/katex-0.19.1/katex.min.js", headers={"Host": "evil.example"})
+        ).status_code == 403

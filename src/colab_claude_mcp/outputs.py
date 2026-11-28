@@ -66,8 +66,8 @@ def extract_outputs(result: dict) -> list[dict]:
 def normalize(outputs: list[dict] | None) -> list[dict]:
     """Flatten nbformat outputs into items with a `kind`.
 
-    Kinds: stream (name, text), text (text), image (mime, data), html (html),
-    error (ename, evalue, traceback). Consecutive stream chunks are merged.
+    Kinds: stream (name, text), text (text; Markdown adds format="markdown", LaTeX adds latex),
+    image (mime, data), html (html), error (ename, evalue, traceback). Consecutive stream chunks are merged.
     """
     items: list[dict] = []
     for output in outputs or []:
@@ -97,8 +97,13 @@ def normalize(outputs: list[dict] | None) -> list[dict]:
                 items.append({"kind": "html", "html": _join(data["text/html"]), "plain": _join(data.get("text/plain"))})
             elif "image/svg+xml" in data:
                 items.append({"kind": "html", "html": _join(data["image/svg+xml"]), "plain": "[SVG image]"})
-            elif "text/markdown" in data:
-                items.append({"kind": "text", "text": _join(data["text/markdown"])})
+            elif "text/markdown" in data:  # the mirror page renders it; Claude reads the source
+                items.append({"kind": "text", "text": _join(data["text/markdown"]), "format": "markdown"})
+            elif "text/latex" in data:  # for example SymPy or IPython.display.Math: the mirror typesets it
+                plain = _join(data.get("text/plain"))
+                items.append(
+                    {"kind": "text", "text": plain or _join(data["text/latex"]), "latex": _join(data["text/latex"])}
+                )
             elif "text/plain" in data:
                 items.append({"kind": "text", "text": _join(data["text/plain"])})
             elif data:

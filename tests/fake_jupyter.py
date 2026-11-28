@@ -190,6 +190,7 @@ class FakeServer:
                 "type": entry["type"],
                 "last_modified": entry.get("last_modified", "2026-01-01T00:00:00.000000Z"),
                 "content": entry.get("content") if query.get("content", ["1"])[0] == "1" else None,
+                "format": entry.get("format", "json" if entry["type"] == "notebook" else None),
             }
             return 200, json.dumps(model)
         if method == "PUT":
