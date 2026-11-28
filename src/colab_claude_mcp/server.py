@@ -57,7 +57,8 @@ JupyterLab (for example on the user's HPC, through an SSH tunnel): jupyter_conne
 there through the user's logged-in JupyterLab tab, which the user links with the "Claude ⇄ Jupyter"
 bookmark. Never ask for the Jupyter password. The cell tools then act on that notebook
 (backend="jupyter"); it is saved on the server after each change, and jupyter_kernel interrupts or
-restarts its kernel. Its mirror page is {config.jupyter_mirror_url()}.
+restarts its kernel. Its mirror page is {config.jupyter_mirror_url()}. Or work in JupyterLab opened in the
+built-in browser (load an `hpc-jupyterlab` skill if available).
 """
     + (
         """
@@ -361,6 +362,11 @@ async def jupyter_connect(
     JupyterLab says the file changed on disk, they must choose Revert, not Overwrite. Long runs:
     run_code_cell returns early, the cell keeps running, and wait_for_cell picks it up, also from a later
     session. On a shared HPC node, use only the cores and GPUs given to the job.
+
+    Another way, which some users prefer: they open JupyterLab itself in Claude's built-in browser (for
+    example http://localhost:8899/lab/tree/<notebook>) and log in there, and Claude works in that page with
+    the browser tools. Every edit and run then shows live, with nothing to Revert and no bookmark. If an
+    `hpc-jupyterlab` skill is available, load it for that route.
     """
     _session["backend"] = "jupyter"
     args = {"notebook_path": notebook_path, "kernel": kernel, "wait_seconds": wait_seconds}
