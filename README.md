@@ -170,16 +170,21 @@ notebook 每次改动后都保存在服务器上；在 Claude 内置浏览器里
 - Images in Markdown cells show on the mirror page wherever they live: on the web, pasted into the cell
   (`attachment:`), or in a file next to the notebook (`figures/a.png`, read from the server through the tab).
 
-### Or: JupyterLab itself in the built-in browser
+### Or: JupyterLab or Colab itself in the built-in browser
 
-You can also open JupyterLab in Claude's built-in browser (for example
-`http://localhost:8899/lab/tree/<notebook>`), log in there, and let Claude work in that page with the browser
-tools: it clicks, types and runs cells the way you would. Every edit and run then shows live in front of you,
-there is only one copy of the notebook open, and there is nothing to Revert. Typing a whole cell, running it,
-interrupting, saving (Cmd+S) and reverting to the last checkpoint were checked with JupyterLab 4.6 on
-2026-11-28. The bridge above remains useful for long runs, for reading complete outputs and images as data,
-and when JupyterLab is open only in another browser. A Claude Code skill for this route can be named
-`hpc-jupyterlab`; the server instructions tell Claude to load it when it exists.
+You can also open JupyterLab (for example `http://localhost:8899/lab/tree/<notebook>`) or Colab in Claude's
+built-in browser, log in there, and let Claude work in that page with the browser tools: it clicks, types and
+runs cells the way you would. Every edit and run then shows live in front of you, there is only one copy of the
+notebook open, and there is nothing to Revert. Checked on 2026-11-28:
+
+- JupyterLab 4.6: typing a whole cell at once, running, interrupting, saving (Cmd+S), reverting to the last
+  checkpoint.
+- Colab: its editor auto-indents and auto-closes brackets, so code has to go in line by line (Enter, Shift+Home,
+  the line, Shift+End, Delete); running (Cmd+Enter), interrupting (Cmd+M I), deleting the runtime.
+
+The bridge and the tools above remain useful for long runs, for reading complete outputs and images as data, and
+when the notebook is open only in another browser. A Claude Code skill for this route can be named
+`remote-notebooks`; the server instructions tell Claude to load it when it exists.
 
 ### How it works
 

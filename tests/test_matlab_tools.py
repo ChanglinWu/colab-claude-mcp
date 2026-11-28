@@ -103,4 +103,4 @@ def test_server_instructions_fit_claude_code(accel):
     assert f"COLAB_CLAUDE_ACCEL={accel}" in instructions
     assert len(instructions) <= 4096
     assert "`matlab` skill" in instructions
-    assert "`hpc-jupyterlab` skill" in instructions  # the built-in browser route for JupyterLab
+    assert "`remote-notebooks` skill" in instructions  # the built-in browser route for JupyterLab and Colab

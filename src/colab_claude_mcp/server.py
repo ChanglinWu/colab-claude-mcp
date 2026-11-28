@@ -57,8 +57,8 @@ JupyterLab (for example on the user's HPC, through an SSH tunnel): jupyter_conne
 there through the user's logged-in JupyterLab tab, which the user links with the "Claude ⇄ Jupyter"
 bookmark. Never ask for the Jupyter password. The cell tools then act on that notebook
 (backend="jupyter"); it is saved on the server after each change, and jupyter_kernel interrupts or
-restarts its kernel. Its mirror page is {config.jupyter_mirror_url()}. Or work in JupyterLab opened in the
-built-in browser (load an `hpc-jupyterlab` skill if available).
+restarts its kernel. Its mirror page is {config.jupyter_mirror_url()}. Or work in JupyterLab or Colab opened
+in the built-in browser (load a `remote-notebooks` skill if available).
 """
     + (
         """
@@ -231,7 +231,12 @@ async def colab_connect(
     ] = True,
     wait_seconds: Annotated[float, Field(description="How long to wait for the tab to connect.", ge=1, le=600)] = 60,
 ) -> ToolResult:
-    """Connect to Colab. Reuses the already connected tab; opens a tab only if none is connected or one is asked for."""
+    """Connect to Colab. Reuses the already connected tab; opens a tab only if none is connected or one is asked for.
+
+    Another way, which some users prefer: they sign in to Colab in Claude's built-in browser, and Claude works
+    in that page with the browser tools, so every edit and run shows live. If a `remote-notebooks` skill is
+    available, load it for that route.
+    """
     _session["backend"] = "colab"
     args = {
         "new_notebook": new_notebook,
@@ -365,8 +370,8 @@ async def jupyter_connect(
 
     Another way, which some users prefer: they open JupyterLab itself in Claude's built-in browser (for
     example http://localhost:8899/lab/tree/<notebook>) and log in there, and Claude works in that page with
-    the browser tools. Every edit and run then shows live, with nothing to Revert and no bookmark. If an
-    `hpc-jupyterlab` skill is available, load it for that route.
+    the browser tools. Every edit and run then shows live, with nothing to Revert and no bookmark. If a
+    `remote-notebooks` skill is available, load it for that route.
     """
     _session["backend"] = "jupyter"
     args = {"notebook_path": notebook_path, "kernel": kernel, "wait_seconds": wait_seconds}
